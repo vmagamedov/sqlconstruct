@@ -29,12 +29,17 @@ from operator import attrgetter
 from functools import partial
 from itertools import chain
 
+import sqlalchemy
 from sqlalchemy.sql import ColumnElement
 from sqlalchemy.util import OrderedDict, immutabledict, ImmutableContainer
 from sqlalchemy.orm.query import _QueryEntity
 from sqlalchemy.orm.attributes import QueryableAttribute
 
+
 PY3 = sys.version_info[0] == 3
+
+SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
+
 
 if PY3:
     import builtins
@@ -44,6 +49,14 @@ if PY3:
 else:
     def _exec_in(source, globals_dict):
         exec('exec source in globals_dict')
+
+
+if SQLA_ge_09:
+    from sqlalchemy.orm.query import Bundle
+else:
+    class Bundle(object):
+        def __init__(self, name, *exprs, **kw):
+            pass
 
 
 __all__ = ('Construct', 'if_', 'apply_', 'define', 'QueryMixin')
@@ -100,23 +113,30 @@ class Object(immutabledict):
         return type(self), (dict(self),)
 
 
-class Construct(object):
+class Construct(Bundle):
+    single_entity = True
 
     def __init__(self, spec):
-        self.spec = OrderedDict(spec)
-        self.columns = tuple(set(chain(*map(_yield_columns, spec.values()))))
+        self._spec = OrderedDict(spec)
+        self._columns = tuple(set(chain(*map(_yield_columns, spec.values()))))
+        super(Construct, self).__init__(None, *self._columns)
 
     def from_row(self, row):
-        values_map = dict(zip(self.columns, row))
+        values_map = dict(zip(self._columns, row))
         get_value = partial(_get_value_from_map, values_map)
         return Object(zip(
-            self.spec.keys(),
-            map(get_value, self.spec.values()),
+            self._spec.keys(),
+            map(get_value, self._spec.values()),
         ))
 
     def from_query(self, query):
-        query = query.with_entities(*self.columns)
+        query = query.with_entities(*self._columns)
         return map(self.from_row, query)
+
+    def create_row_processor(self, query, procs, labels):
+        def proc(row, result):
+            return self.from_row([proc(row, None) for proc in procs])
+        return proc
 
 
 class if_(Processable):
@@ -240,6 +260,8 @@ def define(func):
     return objective
 
 
+# SQLAlchemy < 0.9 compatibility
+
 def _entity_wrapper(query, entity):
     if isinstance(entity, Construct):
         return _ConstructEntity(query, entity)
@@ -276,13 +298,14 @@ class _ConstructEntity(_QueryEntity):
     #    raise NotImplementedError
 
     def setup_context(self, query, context):
-        context.primary_columns.extend(self.struct.columns)
+        context.primary_columns.extend(self.struct._columns)
 
     def row_processor(self, query, context, custom_rows):
-        def processor(row, result):
-            struct_row = [row[c] for c in self.struct.columns]
-            return self.struct.from_row(struct_row)
-        return processor, None
+        def proc(row, result, _column):
+            return row[_column]
+        procs = [partial(proc, _column=c) for c in self.struct._columns]
+        labels = [None] * len(self.struct._columns)
+        return self.struct.create_row_processor(query, procs, labels), None
 
 
 class QueryMixin(object):

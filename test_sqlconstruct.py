@@ -13,16 +13,26 @@ from sqlalchemy import Column, String, Integer, create_engine, ForeignKey, func
 from sqlalchemy.orm import Session, Query as QueryBase, relationship, aliased
 from sqlalchemy.ext.declarative import declarative_base
 
-try:
+
+SQLA_ge_08 = sqlalchemy.__version__ >= '0.8'
+SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
+
+
+if SQLA_ge_08:
     from sqlalchemy.util import KeyedTuple
-except ImportError:
-    from sqlalchemy.util import NamedTuple as KeyedTuple  # 0.7 compat
+else:
+    from sqlalchemy.util import NamedTuple as KeyedTuple
+
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
 
 
-class Query(QueryMixin, QueryBase):
-    pass
+if SQLA_ge_09:
+    class Query(QueryBase):
+        pass
+else:
+    class Query(QueryMixin, QueryBase):
+        pass
 
 
 @define
@@ -62,7 +72,7 @@ class TestConstruct(unittest.TestCase):
 
     def test_object_interface(self):
         obj = Object({'a': 1, 'b': 2})
-        self.assertTrue(isinstance(obj, collections.Mapping))
+        self.assertTrue(isinstance(obj, collections.Mapping), type(obj))
         self.assertEqual(obj.a, 1)
         self.assertEqual(obj['a'], 1)
         self.assertEqual(obj.b, 2)
@@ -123,7 +133,7 @@ class TestConstruct(unittest.TestCase):
             'a_id': self.a_cls.id,
             'a_name': self.a_cls.name,
         })
-        self.assertEquals(set(struct.columns), set([
+        self.assertEquals(set(struct._columns), set([
             self.a_cls.__table__.c.id,
             self.a_cls.__table__.c.name,
         ]))
@@ -131,7 +141,7 @@ class TestConstruct(unittest.TestCase):
             self.a_cls.__table__.c.id: 1,
             self.a_cls.__table__.c.name: 'a1',
         }
-        row = [result[col] for col in struct.columns]
+        row = [result[col] for col in struct._columns]
         s = struct.from_row(row)
         self.assertEqual(s.a_id, 1)
         self.assertEqual(s.a_name, 'a1')
@@ -141,7 +151,7 @@ class TestConstruct(unittest.TestCase):
             'a_id': apply_(operator.add, [self.a_cls.id, 5]),
             'a_name': apply_(operator.concat, [self.a_cls.name, '-test']),
         })
-        self.assertEquals(set(struct.columns), set([
+        self.assertEquals(set(struct._columns), set([
             self.a_cls.__table__.c.id,
             self.a_cls.__table__.c.name,
         ]))
@@ -149,7 +159,7 @@ class TestConstruct(unittest.TestCase):
             self.a_cls.__table__.c.id: 1,
             self.a_cls.__table__.c.name: 'a1',
         }
-        row = [result[col] for col in struct.columns]
+        row = [result[col] for col in struct._columns]
         s = struct.from_row(row)
         self.assertEqual(s.a_id, 1 + 5)
         self.assertEqual(s.a_name, 'a1' + '-test')
@@ -297,7 +307,7 @@ class TestConstruct(unittest.TestCase):
 
         apl1 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=3, extra_name='baz')
-        self.assertTrue(isinstance(apl1, apply_))
+        self.assertTrue(isinstance(apl1, apply_), type(apl1))
         self.assertEquals(set(apl1.yield_columns()), set([c1, c2, c3, c4]))
         self.assertEqual(
             apl1.process({c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
@@ -306,7 +316,7 @@ class TestConstruct(unittest.TestCase):
 
         apl2 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=c1, extra_name=c2)
-        self.assertTrue(isinstance(apl2, apply_))
+        self.assertTrue(isinstance(apl2, apply_), type(apl2))
         self.assertEquals(set(apl2.yield_columns()), set([c1, c2, c3, c4]))
         self.assertEqual(
             apl2.process({c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
@@ -316,7 +326,7 @@ class TestConstruct(unittest.TestCase):
         apl3 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=apply_(operator.add, [c1, c3]),
                                  extra_name=apply_(operator.concat, [c2, c4]))
-        self.assertTrue(isinstance(apl3, apply_))
+        self.assertTrue(isinstance(apl3, apply_), type(apl3))
         self.assertEquals(set(apl3.yield_columns()), set([c1, c2, c3, c4]))
         self.assertEqual(
             apl3.process({c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
@@ -343,11 +353,11 @@ class TestConstruct(unittest.TestCase):
 
         s1, s2 = query.all()
 
-        self.assertTrue(isinstance(s1, Object))
+        self.assertTrue(isinstance(s1, Object), type(s1))
         self.assertEqual(s1.a_id, 1)
         self.assertEqual(s1.a_name, 'a1')
 
-        self.assertTrue(isinstance(s2, Object))
+        self.assertTrue(isinstance(s2, Object), type(s2))
         self.assertEqual(s2.a_id, 2)
         self.assertEqual(s2.a_name, 'a2')
 
@@ -361,17 +371,17 @@ class TestConstruct(unittest.TestCase):
 
         r1, r2 = query.all()
 
-        self.assertTrue(isinstance(r1, KeyedTuple))
+        self.assertTrue(isinstance(r1, KeyedTuple), type(r1))
         self.assertEqual(r1.id, 1)
         self.assertEqual(r1.name, 'a1')
-        self.assertTrue(isinstance(r1[1], Object))
+        self.assertTrue(isinstance(r1[1], Object), type(r1[1]))
         self.assertEqual(r1[1].a_id, 1)
         self.assertEqual(r1[1].a_name, 'a1')
 
-        self.assertTrue(isinstance(r2, KeyedTuple))
+        self.assertTrue(isinstance(r2, KeyedTuple), type(r2))
         self.assertEqual(r2.id, 2)
         self.assertEqual(r2.name, 'a2')
-        self.assertTrue(isinstance(r2[1], Object))
+        self.assertTrue(isinstance(r2[1], Object), type(r2[1]))
         self.assertEqual(r2[1].a_id, 2)
         self.assertEqual(r2[1].a_name, 'a2')
 
@@ -398,7 +408,7 @@ class TestConstruct(unittest.TestCase):
 
         s, = query.all()
 
-        self.assertTrue(isinstance(s, Object))
+        self.assertTrue(isinstance(s, Object), type(s))
         self.assertEqual(s.a1_id, 1)
         self.assertEqual(s.a1_name, 'a1')
         self.assertEqual(s.a2_id, 2)
@@ -427,7 +437,7 @@ class TestConstruct(unittest.TestCase):
 
         s, = query.all()
 
-        self.assertTrue(isinstance(s, Object))
+        self.assertTrue(isinstance(s, Object), type(s))
         self.assertEqual(s.a1_id, 1)
         self.assertEqual(s.a1_name, 'a1')
         self.assertEqual(s.a2_id, 2)
@@ -446,19 +456,19 @@ class TestConstruct(unittest.TestCase):
 
         s1, s2 = query.all()
 
-        self.assertTrue(isinstance(s1, Object))
+        self.assertTrue(isinstance(s1, Object), type(s1))
         self.assertEqual(s1.a_id, 1)
         self.assertEqual(s1.a_name, 'a1')
         self.assertEqual(s1.b_id, 1)
         self.assertEqual(s1.b_name, 'b1')
 
-        self.assertTrue(isinstance(s2, Object))
+        self.assertTrue(isinstance(s2, Object), type(s2))
         self.assertEqual(s2.a_id, 2)
         self.assertEqual(s2.a_name, 'a2')
         self.assertEqual(s2.b_id, 2)
         self.assertEqual(s2.b_name, 'b2')
 
-    @unittest.skipIf(sqlalchemy.__version__ >= '0.8', 'SQLAlchemy >= 0.8')
+    @unittest.skipIf(SQLA_ge_08, 'SQLAlchemy < 0.8')
     def test_query_with_implicit_join_lt_08(self):
         from sqlalchemy.exc import InvalidRequestError
 
@@ -488,7 +498,7 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(e2.exception.args[0],
                          'Could not find a FROM clause to join from')
 
-    @unittest.skipIf(sqlalchemy.__version__ < '0.8', 'SQLAlchemy < 0.8')
+    @unittest.skipIf(not SQLA_ge_08 or SQLA_ge_09, '0.8 <= SQLAlchemy < 0.9')
     def test_query_with_implicit_join_ge_08(self):
         from sqlalchemy.exc import NoInspectionAvailable
 
