@@ -1,26 +1,38 @@
-"""Presents models to the views (templates)
+"""
+    sqlconstruct
+    ~~~~~~~~~~~~
+
+    Functional approach to query database using SQLAlchemy.
 
     Example::
 
-        product_struct = Construct(dict(
-            name=Product.name,
-            url=apply_(
-                get_product_url_fn,
-                args=[Product.id, Product.name, Company.domain],
-            ),
-            image_url=apply_(
-                get_image_url_fn,
-                args=[Image.id, Image.file_name, Image.store_type, 100, 100],
-            ),
-        ))
+        >>> product_struct = Construct({
+        ...     'name': Product.name,
+        ...     'url': url_for_product.defn(Product),
+        ...     'image_url': if_(
+        ...         Image.id,
+        ...         then_=url_for_image.defn(Image, 100, 100),
+        ...         else_=None,
+        ...     ),
+        ... })
+        ...
+        >>> product = (
+        ...     session.query(product_struct)
+        ...     .outerjoin(Product.image)
+        ...     .first()
+        ... )
+        ...
+        >>> product.name
+        u'Foo product'
+        >>> product.url
+        '/p1-foo-product.html'
+        >>> product.image_url
+        '//images.example.st/1-100x100-foo.jpg'
 
-        products = (
-            db.session.query(product_struct)
-            .join(Product.company)
-            .outerjoin(Product.main_image)
-            .limit(10)
-        )
+    See README.rst for more examples and documentation.
 
+    :copyright: (c) 2013 Vladimir Magamedov.
+    :license: BSD, see LICENSE.txt for more details.
 """
 import sys
 import abc
@@ -196,14 +208,21 @@ def define(func):
 
     Example::
 
-        @construct.define
-        def url(image, width, height, opt=5):
-
-            def body(id_, name, store_type, width, height, opt):
-                print id_, name, store_type, width, height, opt
-
-            return body, [image.id, image.file_name, image.store_type, width,
-                          height, opt]
+        >>> @define
+        ... def url_for_product(product):
+        ...     def body(product_id, product_name):
+        ...         return '/p{id}-{name}.html'.format(
+        ...             id=product_id,
+        ...             name=slugify(product_name),
+        ...         )
+        ...     return body, [product.id, product.name]
+        ...
+        >>> url_for_product(product)
+        '/p1-foo-product.html'
+        >>> url_for_product.defn(Product)
+        <sqlconstruct.apply_ at 0x000000000>
+        >>> url_for_product.func(product.id, product.name)
+        '/p1-foo-product.html'
 
     """
     spec = inspect.getargspec(func)
