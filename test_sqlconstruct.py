@@ -1,3 +1,4 @@
+import sys
 import pickle
 import inspect
 import operator
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session, Query as QueryBase, relationship, aliased
 from sqlalchemy.ext.declarative import declarative_base
 
 
+PY3 = sys.version_info[0] == 3
 SQLA_ge_08 = sqlalchemy.__version__ >= '0.8'
 SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
 
@@ -142,7 +144,7 @@ class TestConstruct(unittest.TestCase):
             self.a_cls.__table__.c.name: 'a1',
         }
         row = [result[col] for col in struct._columns]
-        s = struct.from_row(row)
+        s = struct._from_row(row)
         self.assertEqual(s.a_id, 1)
         self.assertEqual(s.a_name, 'a1')
 
@@ -160,7 +162,7 @@ class TestConstruct(unittest.TestCase):
             self.a_cls.__table__.c.name: 'a1',
         }
         row = [result[col] for col in struct._columns]
-        s = struct.from_row(row)
+        s = struct._from_row(row)
         self.assertEqual(s.a_id, 1 + 5)
         self.assertEqual(s.a_name, 'a1' + '-test')
 
@@ -168,24 +170,24 @@ class TestConstruct(unittest.TestCase):
         add = lambda a, b, c=30, d=400: a + b + c + d
 
         min_pos_apply = apply_(add, [1, 2])
-        self.assertEqual(set(min_pos_apply.yield_columns()), set())
-        self.assertEqual(min_pos_apply.process({}), 1 + 2 + 30 + 400)
+        self.assertEqual(set(min_pos_apply.__columns__()), set())
+        self.assertEqual(min_pos_apply.__process__({}), 1 + 2 + 30 + 400)
 
         min_kw_apply = apply_(add, [], {'a': 1, 'b': 2})
-        self.assertEqual(set(min_kw_apply.yield_columns()), set())
-        self.assertEqual(min_kw_apply.process({}), 1 + 2 + 30 + 400)
+        self.assertEqual(set(min_kw_apply.__columns__()), set())
+        self.assertEqual(min_kw_apply.__process__({}), 1 + 2 + 30 + 400)
 
         max_pos_apply = apply_(add, [1, 2, 33, 444])
-        self.assertEqual(set(max_pos_apply.yield_columns()), set())
-        self.assertEqual(max_pos_apply.process({}), 1 + 2 + 33 + 444)
+        self.assertEqual(set(max_pos_apply.__columns__()), set())
+        self.assertEqual(max_pos_apply.__process__({}), 1 + 2 + 33 + 444)
 
         max_kw_apply = apply_(add, [], {'a': 1, 'b': 2, 'c': 33, 'd': 444})
-        self.assertEqual(set(max_kw_apply.yield_columns()), set())
-        self.assertEqual(max_kw_apply.process({}), 1 + 2 + 33 + 444)
+        self.assertEqual(set(max_kw_apply.__columns__()), set())
+        self.assertEqual(max_kw_apply.__process__({}), 1 + 2 + 33 + 444)
 
         mixed_apply = apply_(add, [1, 2], {'c': 33, 'd': 444})
-        self.assertEqual(set(mixed_apply.yield_columns()), set())
-        self.assertEqual(mixed_apply.process({}), 1 + 2 + 33 + 444)
+        self.assertEqual(set(mixed_apply.__columns__()), set())
+        self.assertEqual(mixed_apply.__process__({}), 1 + 2 + 33 + 444)
 
     def test_apply_with_columns(self):
         f1 = self.a_cls.id
@@ -198,16 +200,16 @@ class TestConstruct(unittest.TestCase):
         add = lambda a, b: a + b
 
         apl1 = apply_(add, [f1], {'b': f2})
-        self.assertEquals(set(apl1.yield_columns()), set([c1, c2]))
-        self.assertEqual(apl1.process({c1: 3, c2: 4}), 3 + 4)
+        self.assertEquals(set(apl1.__columns__()), set([c1, c2]))
+        self.assertEqual(apl1.__process__({hash(c1): 3, hash(c2): 4}), 3 + 4)
 
         apl2 = apply_(add, [c1], {'b': c2})
-        self.assertEquals(set(apl2.yield_columns()), set([c1, c2]))
-        self.assertEqual(apl1.process({c1: 4, c2: 5}), 4 + 5)
+        self.assertEquals(set(apl2.__columns__()), set([c1, c2]))
+        self.assertEqual(apl1.__process__({hash(c1): 4, hash(c2): 5}), 4 + 5)
 
         apl3 = apply_(add, [fn1], {'b': fn2})
-        self.assertEquals(set(apl3.yield_columns()), set([fn1, fn2]))
-        self.assertEqual(apl3.process({fn1: 5, fn2: 6}), 5 + 6)
+        self.assertEquals(set(apl3.__columns__()), set([fn1, fn2]))
+        self.assertEqual(apl3.__process__({hash(fn1): 5, hash(fn2): 6}), 5 + 6)
 
     def test_nested_apply(self):
         c1 = self.a_cls.__table__.c.id
@@ -243,8 +245,9 @@ class TestConstruct(unittest.TestCase):
                 ]),
             ]),
         ])
-        self.assertEquals(set(apl.yield_columns()), set([c1, c2]))
-        self.assertEqual(apl.process({c1: 4, c2: 5}), sum(range(10)))
+        self.assertEquals(set(apl.__columns__()), set([c1, c2]))
+        self.assertEqual(apl.__process__({hash(c1): 4, hash(c2): 5}),
+                         sum(range(10)))
 
     def test_if(self):
         add = lambda a, b: a + b
@@ -254,22 +257,36 @@ class TestConstruct(unittest.TestCase):
         c4 = self.b_cls.__table__.c.name
 
         if1 = if_(True, then_=1, else_=2)
-        self.assertEquals(set(if1.yield_columns()), set())
-        self.assertEqual(if1.process({}), 1)
+        self.assertEquals(set(if1.__columns__()), set())
+        self.assertEqual(if1.__process__({}), 1)
 
         if2 = if_(False, then_=1, else_=2)
-        self.assertEquals(set(if2.yield_columns()), set())
-        self.assertEqual(if2.process({}), 2)
+        self.assertEquals(set(if2.__columns__()), set())
+        self.assertEqual(if2.__process__({}), 2)
 
         if3 = if_(c1, then_=c2, else_=c3)
-        self.assertEquals(set(if3.yield_columns()), set([c1, c2, c3]))
-        self.assertEqual(if3.process({c1: 0, c2: 3, c3: 6}), 6)
-        self.assertEqual(if3.process({c1: 1, c2: 3, c3: 6}), 3)
+        self.assertEquals(set(if3.__columns__()), set([c1, c2, c3]))
+        self.assertEqual(
+            if3.__process__({hash(c1): 0, hash(c2): 3, hash(c3): 6}),
+            6,
+        )
+        self.assertEqual(
+            if3.__process__({hash(c1): 1, hash(c2): 3, hash(c3): 6}),
+            3,
+        )
 
         if4 = if_(c1, then_=apply_(add, [c2, c3]), else_=apply_(add, [c3, c4]))
-        self.assertEquals(set(if4.yield_columns()), set([c1, c2, c3, c4]))
-        self.assertEqual(if4.process({c1: 0, c2: 2, c3: 3, c4: 4}), 3 + 4)
-        self.assertEqual(if4.process({c1: 1, c2: 2, c3: 3, c4: 4}), 2 + 3)
+        self.assertEquals(set(if4.__columns__()), set([c1, c2, c3, c4]))
+        self.assertEqual(
+            if4.__process__({hash(c1): 0, hash(c2): 2, hash(c3): 3,
+                             hash(c4): 4}),
+            3 + 4,
+        )
+        self.assertEqual(
+            if4.__process__({hash(c1): 1, hash(c2): 2, hash(c3): 3,
+                             hash(c4): 4}),
+            2 + 3,
+        )
 
     def test_defined_signatures(self):
         obj_spec = inspect.getargspec(defined_func)
@@ -308,18 +325,20 @@ class TestConstruct(unittest.TestCase):
         apl1 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=3, extra_name='baz')
         self.assertTrue(isinstance(apl1, apply_), type(apl1))
-        self.assertEquals(set(apl1.yield_columns()), set([c1, c2, c3, c4]))
+        self.assertEquals(set(apl1.__columns__()), set([c1, c2, c3, c4]))
         self.assertEqual(
-            apl1.process({c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
+            apl1.__process__({hash(c1): 1, hash(c2): 'foo', hash(c3): 2,
+                              hash(c4): 'bar'}),
             (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
         )
 
         apl2 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=c1, extra_name=c2)
         self.assertTrue(isinstance(apl2, apply_), type(apl2))
-        self.assertEquals(set(apl2.yield_columns()), set([c1, c2, c3, c4]))
+        self.assertEquals(set(apl2.__columns__()), set([c1, c2, c3, c4]))
         self.assertEqual(
-            apl2.process({c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
+            apl2.__process__({hash(c1): 1, hash(c2): 'foo', hash(c3): 2,
+                              hash(c4): 'bar'}),
             (1 + 2 + 1, 'foo' + 'bar' + 'foo'),
         )
 
@@ -327,9 +346,10 @@ class TestConstruct(unittest.TestCase):
                                  extra_id=apply_(operator.add, [c1, c3]),
                                  extra_name=apply_(operator.concat, [c2, c4]))
         self.assertTrue(isinstance(apl3, apply_), type(apl3))
-        self.assertEquals(set(apl3.yield_columns()), set([c1, c2, c3, c4]))
+        self.assertEquals(set(apl3.__columns__()), set([c1, c2, c3, c4]))
         self.assertEqual(
-            apl3.process({c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
+            apl3.__process__({hash(c1): 1, hash(c2): 'foo', hash(c3): 2,
+                              hash(c4): 'bar'}),
             (1 + 2 + (1 + 2), 'foo' + 'bar' + ('foo' + 'bar')),
         )
 
@@ -525,3 +545,106 @@ class TestConstruct(unittest.TestCase):
                 .join(self.b_cls)
             )
         self.assertIn('No inspection system is available', e2.exception.args[0])
+
+    @unittest.skip('optional')
+    def test_performance(self):
+        from pstats import Stats
+        from cProfile import Profile
+        try:
+            from cStringIO import StringIO
+        except ImportError:
+            from io import StringIO
+
+        _range = range if PY3 else xrange
+
+        @define
+        def test_func(a, b):
+            def body(a_id, a_name, b_id, b_name):
+                pass
+            return body, [a.id, a.name, b.id, b.name]
+
+        struct = Construct({
+            'r1': if_(self.a_cls.id,
+                      then_=test_func.defn(self.a_cls, self.b_cls)),
+            'r2': if_(self.a_cls.name,
+                      then_=test_func.defn(self.a_cls, self.b_cls)),
+            'r3': if_(self.b_cls.id,
+                      then_=test_func.defn(self.a_cls, self.b_cls)),
+            'r4': if_(self.b_cls.name,
+                      then_=test_func.defn(self.a_cls, self.b_cls)),
+        })
+
+        row = (
+            self.session.query(*struct._columns)
+            .join(self.b_cls.a)
+            .first()
+        )
+
+        # warm-up
+        for _ in _range(5000):
+            struct._from_row(row)
+
+        profile1 = Profile()
+        profile1.enable()
+
+        for _ in _range(5000):
+            struct._from_row(row)
+
+        profile1.disable()
+        out1 = StringIO()
+        stats1 = Stats(profile1, stream=out1)
+        stats1.strip_dirs()
+        stats1.sort_stats('calls').print_stats(10)
+        print(out1.getvalue().lstrip())
+        out1.close()
+
+        row = (
+            self.session.query(
+                self.a_cls.id.label('a_id'),
+                self.a_cls.name.label('a_name'),
+                self.b_cls.id.label('b_id'),
+                self.b_cls.name.label('b_name'),
+            )
+            .join(self.b_cls.a)
+            .first()
+        )
+
+        def make_object(row):
+            Object(dict(
+                r1=(
+                    test_func.func(row.a_id, row.a_name, row.b_id, row.b_name)
+                    if row.a_id else None
+                ),
+                r2=(
+                    test_func.func(row.a_id, row.a_name, row.b_id, row.b_name)
+                    if row.a_name else None
+                ),
+                r3=(
+                    test_func.func(row.a_id, row.a_name, row.b_id, row.b_name)
+                    if row.b_id else None
+                ),
+                r4=(
+                    test_func.func(row.a_id, row.a_name, row.b_id, row.b_name)
+                    if row.b_name else None
+                ),
+            ))
+
+        # warm-up
+        for _ in _range(5000):
+            make_object(row)
+
+        profile2 = Profile()
+        profile2.enable()
+
+        for _ in _range(5000):
+            make_object(row)
+
+        profile2.disable()
+        out2 = StringIO()
+        stats2 = Stats(profile2, stream=out2)
+        stats2.strip_dirs()
+        stats2.sort_stats('calls').print_stats(10)
+        print(out2.getvalue().lstrip())
+        out2.close()
+
+        self.assertEqual(stats1.total_calls, stats2.total_calls)

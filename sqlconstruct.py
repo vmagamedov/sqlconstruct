@@ -37,13 +37,13 @@
 import sys
 import abc
 import inspect
-from operator import attrgetter
+from operator import attrgetter, itemgetter, methodcaller
 from functools import partial
 from itertools import chain
 
 import sqlalchemy
 from sqlalchemy.sql import ColumnElement
-from sqlalchemy.util import OrderedDict, immutabledict, ImmutableContainer
+from sqlalchemy.util import immutabledict, ImmutableContainer
 from sqlalchemy.orm.query import _QueryEntity
 from sqlalchemy.orm.attributes import QueryableAttribute
 
@@ -58,9 +58,19 @@ if PY3:
 
     def _exec_in(source, globals_dict):
         getattr(builtins, 'exec')(source, globals_dict)
+
+    _map = map
+    _zip = zip
+
+    _iteritems = dict.items
+
 else:
     def _exec_in(source, globals_dict):
         exec('exec source in globals_dict')
+
+    from itertools import imap as _map, izip as _zip
+
+    _iteritems = dict.iteritems
 
 
 if SQLA_ge_09:
@@ -78,23 +88,23 @@ class Processable(object):
     __metaclass__ = abc.ABCMeta
 
     @abc.abstractmethod
-    def yield_columns(self):
+    def __columns__(self):
         pass
 
     @abc.abstractmethod
-    def process(self, values_map):
+    def __process__(self, values_map):
         pass
 
 
-def _get_value_from_map(values_map, value):
+def _get_value_processor(value):
     if isinstance(value, ColumnElement):
-        return values_map[value]
+        return itemgetter(hash(value))
     elif isinstance(value, QueryableAttribute):
-        return values_map[value.__clause_element__()]
+        return itemgetter(hash(value.__clause_element__()))
     elif isinstance(value, Processable):
-        return value.process(values_map)
+        return value.__process__
     else:
-        return value
+        return lambda values_map: value
 
 
 def _yield_columns(value):
@@ -103,11 +113,14 @@ def _yield_columns(value):
     elif isinstance(value, QueryableAttribute):
         yield value.__clause_element__()
     elif isinstance(value, Processable):
-        for column in value.yield_columns():
+        for column in value.__columns__():
             yield column
 
 
 class Object(immutabledict):
+
+    __new__ = dict.__new__
+    __init__ = dict.__init__
 
     def __getattr__(self, attr):
         try:
@@ -129,69 +142,79 @@ class Construct(Bundle):
     single_entity = True
 
     def __init__(self, spec):
-        self._spec = OrderedDict(spec)
-        self._columns = tuple(set(chain(*map(_yield_columns, spec.values()))))
+        self._spec_keys, self._spec_values = zip(*(
+            _iteritems(spec)
+        )) if spec else [(), ()]
+        self._columns = tuple(set(chain(*_map(_yield_columns,
+                                              self._spec_values))))
+        self._column_hashes = tuple(_map(hash, self._columns))
+        self._processors = tuple(_map(_get_value_processor, self._spec_values))
         super(Construct, self).__init__(None, *self._columns)
 
-    def from_row(self, row):
-        values_map = dict(zip(self._columns, row))
-        get_value = partial(_get_value_from_map, values_map)
-        return Object(zip(
-            self._spec.keys(),
-            map(get_value, self._spec.values()),
-        ))
+    def _from_row(self, row):
+        values_map = dict(_zip(self._column_hashes, row))
+        mc = methodcaller('__call__', values_map)
+        return Object(_zip(self._spec_keys, _map(mc, self._processors)))
 
     def from_query(self, query):
         query = query.with_entities(*self._columns)
-        return map(self.from_row, query)
+        return list(_map(self._from_row, query))
 
     def create_row_processor(self, query, procs, labels):
         def proc(row, result):
-            return self.from_row([proc(row, None) for proc in procs])
+            return self._from_row([proc(row, None) for proc in procs])
         return proc
 
 
 class if_(Processable):
 
     def __init__(self, condition, then_=None, else_=None):
-        self.condition = condition
-        self.then_ = then_
-        self.else_ = else_
+        self._cond = condition
+        self._then = then_
+        self._else = else_
 
-    def yield_columns(self):
-        for obj in (self.condition, self.then_, self.else_):
+        self._cond_proc = _get_value_processor(condition)
+        self._then_proc = _get_value_processor(then_)
+        self._else_proc = _get_value_processor(else_)
+
+    def __columns__(self):
+        for obj in (self._cond, self._then, self._else):
             for column in _yield_columns(obj):
                 yield column
 
-    def process(self, values_map):
-        get_value = partial(_get_value_from_map, values_map)
-        condition = get_value(self.condition)
-        if condition:
-            return get_value(self.then_)
+    def __process__(self, values_map):
+        if self._cond_proc(values_map):
+            return self._then_proc(values_map)
         else:
-            return get_value(self.else_)
+            return self._else_proc(values_map)
 
 
 class apply_(Processable):
 
     def __init__(self, func, args=None, kwargs=None):
-        self.func = func
-        self.args = args or []
-        self.kwargs = OrderedDict(kwargs or [])
+        self._func = func
+        self._args = args or []
+        self._kw_keys, self._kw_values = zip(*(
+            _iteritems(kwargs)
+        )) if kwargs else [(), ()]
+        self._args_procs = tuple(_map(_get_value_processor, self._args))
+        self._kwargs_procs = tuple(_map(_get_value_processor, self._kw_values))
+        self._has_kwargs = bool(kwargs)
 
-    def yield_columns(self):
-        for arg in set(self.args).union(self.kwargs.values()):
+    def __columns__(self):
+        for arg in set(self._args).union(self._kw_values):
             for column in _yield_columns(arg):
                 yield column
 
-    def process(self, values_map):
-        get_value = partial(_get_value_from_map, values_map)
-        args = map(get_value, self.args)
-        kwargs = dict(zip(
-            self.kwargs.keys(),
-            map(get_value, self.kwargs.values()),
-        ))
-        return self.func(*args, **kwargs)
+    def __process__(self, values_map):
+        mc = methodcaller('__call__', values_map)
+        args = _map(mc, self._args_procs)
+        if self._has_kwargs:
+            kwargs_values = _map(mc, self._kwargs_procs)
+            kwargs = dict(_zip(self._kw_keys, kwargs_values))
+            return self._func(*args, **kwargs)
+        else:
+            return self._func(*args)
 
 
 class _arg_helper(object):
@@ -236,8 +259,8 @@ def define(func):
         formatvalue=lambda value: '=' + value,
     )
 
-    body, arg_helpers = func(*map(_arg_helper, spec.args))
-    body_args = ', '.join(map(attrgetter('__name__'), arg_helpers))
+    body, arg_helpers = func(*_map(_arg_helper, spec.args))
+    body_args = ', '.join(_map(attrgetter('__name__'), arg_helpers))
 
     definition_src = (
         'def {name}{signature}:\n'
