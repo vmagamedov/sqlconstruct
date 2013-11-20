@@ -44,6 +44,13 @@ def defined_func(a, b, extra_id=0, extra_name=''):
     return body, [a.id, a.name, b.id, b.name, extra_id, extra_name]
 
 
+def proceed(processable, mapping):
+    keys, row = zip(*mapping.items()) if mapping else [(), ()]
+    processor = processable.__processor__()
+    row_map = {hash(key): i for i, key in enumerate(keys)}
+    return processor(row_map, row)
+
+
 class TestConstruct(unittest.TestCase):
 
     def setUp(self):
@@ -135,10 +142,10 @@ class TestConstruct(unittest.TestCase):
             'a_id': self.a_cls.id,
             'a_name': self.a_cls.name,
         })
-        self.assertEquals(set(struct._columns), set([
+        self.assertEquals(set(struct._columns), {
             self.a_cls.__table__.c.id,
             self.a_cls.__table__.c.name,
-        ]))
+        })
         result = {
             self.a_cls.__table__.c.id: 1,
             self.a_cls.__table__.c.name: 'a1',
@@ -153,10 +160,10 @@ class TestConstruct(unittest.TestCase):
             'a_id': apply_(operator.add, [self.a_cls.id, 5]),
             'a_name': apply_(operator.concat, [self.a_cls.name, '-test']),
         })
-        self.assertEquals(set(struct._columns), set([
+        self.assertEquals(set(struct._columns), {
             self.a_cls.__table__.c.id,
             self.a_cls.__table__.c.name,
-        ]))
+        })
         result = {
             self.a_cls.__table__.c.id: 1,
             self.a_cls.__table__.c.name: 'a1',
@@ -171,23 +178,23 @@ class TestConstruct(unittest.TestCase):
 
         min_pos_apply = apply_(add, [1, 2])
         self.assertEqual(set(min_pos_apply.__columns__()), set())
-        self.assertEqual(min_pos_apply.__process__({}), 1 + 2 + 30 + 400)
+        self.assertEqual(proceed(min_pos_apply, {}), 1 + 2 + 30 + 400)
 
         min_kw_apply = apply_(add, [], {'a': 1, 'b': 2})
         self.assertEqual(set(min_kw_apply.__columns__()), set())
-        self.assertEqual(min_kw_apply.__process__({}), 1 + 2 + 30 + 400)
+        self.assertEqual(proceed(min_kw_apply, {}), 1 + 2 + 30 + 400)
 
         max_pos_apply = apply_(add, [1, 2, 33, 444])
         self.assertEqual(set(max_pos_apply.__columns__()), set())
-        self.assertEqual(max_pos_apply.__process__({}), 1 + 2 + 33 + 444)
+        self.assertEqual(proceed(max_pos_apply, {}), 1 + 2 + 33 + 444)
 
         max_kw_apply = apply_(add, [], {'a': 1, 'b': 2, 'c': 33, 'd': 444})
         self.assertEqual(set(max_kw_apply.__columns__()), set())
-        self.assertEqual(max_kw_apply.__process__({}), 1 + 2 + 33 + 444)
+        self.assertEqual(proceed(max_kw_apply, {}), 1 + 2 + 33 + 444)
 
         mixed_apply = apply_(add, [1, 2], {'c': 33, 'd': 444})
         self.assertEqual(set(mixed_apply.__columns__()), set())
-        self.assertEqual(mixed_apply.__process__({}), 1 + 2 + 33 + 444)
+        self.assertEqual(proceed(mixed_apply, {}), 1 + 2 + 33 + 444)
 
     def test_apply_with_columns(self):
         f1 = self.a_cls.id
@@ -200,16 +207,16 @@ class TestConstruct(unittest.TestCase):
         add = lambda a, b: a + b
 
         apl1 = apply_(add, [f1], {'b': f2})
-        self.assertEquals(set(apl1.__columns__()), set([c1, c2]))
-        self.assertEqual(apl1.__process__({hash(c1): 3, hash(c2): 4}), 3 + 4)
+        self.assertEquals(set(apl1.__columns__()), {c1, c2})
+        self.assertEqual(proceed(apl1, {c1: 3, c2: 4}), 3 + 4)
 
         apl2 = apply_(add, [c1], {'b': c2})
-        self.assertEquals(set(apl2.__columns__()), set([c1, c2]))
-        self.assertEqual(apl1.__process__({hash(c1): 4, hash(c2): 5}), 4 + 5)
+        self.assertEquals(set(apl2.__columns__()), {c1, c2})
+        self.assertEqual(proceed(apl1, {c1: 4, c2: 5}), 4 + 5)
 
         apl3 = apply_(add, [fn1], {'b': fn2})
-        self.assertEquals(set(apl3.__columns__()), set([fn1, fn2]))
-        self.assertEqual(apl3.__process__({hash(fn1): 5, hash(fn2): 6}), 5 + 6)
+        self.assertEquals(set(apl3.__columns__()), {fn1, fn2})
+        self.assertEqual(proceed(apl3, {fn1: 5, fn2: 6}), 5 + 6)
 
     def test_nested_apply(self):
         c1 = self.a_cls.__table__.c.id
@@ -245,9 +252,8 @@ class TestConstruct(unittest.TestCase):
                 ]),
             ]),
         ])
-        self.assertEquals(set(apl.__columns__()), set([c1, c2]))
-        self.assertEqual(apl.__process__({hash(c1): 4, hash(c2): 5}),
-                         sum(range(10)))
+        self.assertEquals(set(apl.__columns__()), {c1, c2})
+        self.assertEqual(proceed(apl, {c1: 4, c2: 5}), sum(range(10)))
 
     def test_if(self):
         add = lambda a, b: a + b
@@ -258,35 +264,21 @@ class TestConstruct(unittest.TestCase):
 
         if1 = if_(True, then_=1, else_=2)
         self.assertEquals(set(if1.__columns__()), set())
-        self.assertEqual(if1.__process__({}), 1)
+        self.assertEqual(proceed(if1, {}), 1)
 
         if2 = if_(False, then_=1, else_=2)
         self.assertEquals(set(if2.__columns__()), set())
-        self.assertEqual(if2.__process__({}), 2)
+        self.assertEqual(proceed(if2, {}), 2)
 
         if3 = if_(c1, then_=c2, else_=c3)
-        self.assertEquals(set(if3.__columns__()), set([c1, c2, c3]))
-        self.assertEqual(
-            if3.__process__({hash(c1): 0, hash(c2): 3, hash(c3): 6}),
-            6,
-        )
-        self.assertEqual(
-            if3.__process__({hash(c1): 1, hash(c2): 3, hash(c3): 6}),
-            3,
-        )
+        self.assertEquals(set(if3.__columns__()), {c1, c2, c3})
+        self.assertEqual(proceed(if3, {c1: 0, c2: 3, c3: 6}), 6)
+        self.assertEqual(proceed(if3, {c1: 1, c2: 3, c3: 6}), 3)
 
         if4 = if_(c1, then_=apply_(add, [c2, c3]), else_=apply_(add, [c3, c4]))
-        self.assertEquals(set(if4.__columns__()), set([c1, c2, c3, c4]))
-        self.assertEqual(
-            if4.__process__({hash(c1): 0, hash(c2): 2, hash(c3): 3,
-                             hash(c4): 4}),
-            3 + 4,
-        )
-        self.assertEqual(
-            if4.__process__({hash(c1): 1, hash(c2): 2, hash(c3): 3,
-                             hash(c4): 4}),
-            2 + 3,
-        )
+        self.assertEquals(set(if4.__columns__()), {c1, c2, c3, c4})
+        self.assertEqual(proceed(if4, {c1: 0, c2: 2, c3: 3, c4: 4}), 3 + 4)
+        self.assertEqual(proceed(if4, {c1: 1, c2: 2, c3: 3, c4: 4}), 2 + 3)
 
     def test_defined_signatures(self):
         obj_spec = inspect.getargspec(defined_func)
@@ -325,20 +317,18 @@ class TestConstruct(unittest.TestCase):
         apl1 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=3, extra_name='baz')
         self.assertTrue(isinstance(apl1, apply_), type(apl1))
-        self.assertEquals(set(apl1.__columns__()), set([c1, c2, c3, c4]))
+        self.assertEquals(set(apl1.__columns__()), {c1, c2, c3, c4})
         self.assertEqual(
-            apl1.__process__({hash(c1): 1, hash(c2): 'foo', hash(c3): 2,
-                              hash(c4): 'bar'}),
+            proceed(apl1, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
             (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
         )
 
         apl2 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=c1, extra_name=c2)
         self.assertTrue(isinstance(apl2, apply_), type(apl2))
-        self.assertEquals(set(apl2.__columns__()), set([c1, c2, c3, c4]))
+        self.assertEquals(set(apl2.__columns__()), {c1, c2, c3, c4})
         self.assertEqual(
-            apl2.__process__({hash(c1): 1, hash(c2): 'foo', hash(c3): 2,
-                              hash(c4): 'bar'}),
+            proceed(apl2, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
             (1 + 2 + 1, 'foo' + 'bar' + 'foo'),
         )
 
@@ -346,10 +336,9 @@ class TestConstruct(unittest.TestCase):
                                  extra_id=apply_(operator.add, [c1, c3]),
                                  extra_name=apply_(operator.concat, [c2, c4]))
         self.assertTrue(isinstance(apl3, apply_), type(apl3))
-        self.assertEquals(set(apl3.__columns__()), set([c1, c2, c3, c4]))
+        self.assertEquals(set(apl3.__columns__()), {c1, c2, c3, c4})
         self.assertEqual(
-            apl3.__process__({hash(c1): 1, hash(c2): 'foo', hash(c3): 2,
-                              hash(c4): 'bar'}),
+            proceed(apl3, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
             (1 + 2 + (1 + 2), 'foo' + 'bar' + ('foo' + 'bar')),
         )
 
