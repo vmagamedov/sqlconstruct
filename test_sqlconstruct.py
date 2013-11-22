@@ -137,6 +137,12 @@ class TestConstruct(unittest.TestCase):
         with self.assertRaises(TypeError):
             obj.update({'foo': 'baz'})
 
+    def test_scalar_construct(self):
+        struct = Construct({'foo': 1, 'bar': '2'})
+        s = struct._from_row([])
+        self.assertEqual(s.foo, 1)
+        self.assertEqual(s.bar, '2')
+
     def test_basic_construct(self):
         struct = Construct({
             'a_id': self.a_cls.id,

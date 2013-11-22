@@ -54,21 +54,19 @@ SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
 
 if PY3:
     import builtins
-
     def _exec_in(source, globals_dict):
         getattr(builtins, 'exec')(source, globals_dict)
 
     _map = map
-    _zip = zip
-
+    _range = range
     _iteritems = dict.items
 
 else:
     def _exec_in(source, globals_dict):
         exec('exec source in globals_dict')
 
-    from itertools import imap as _map, izip as _zip
-
+    from itertools import imap as _map
+    _range = xrange
     _iteritems = dict.iteritems
 
 
@@ -142,7 +140,7 @@ class Construct(Bundle):
         self._columns = tuple(set(chain(*_map(_yield_columns, self._values))))
         self._processors = tuple(_map(_get_value_processor, self._values))
         self._row_map = {hash(col): i for i, col in enumerate(self._columns)}
-        self._range = range(len(self._columns))
+        self._range = tuple(_range(len(self._keys)))
         super(Construct, self).__init__(None, *self._columns)
 
     def _from_row(self, row):
