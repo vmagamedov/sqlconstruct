@@ -277,6 +277,21 @@ you will have to do next changes in your project configuration:
         pass
 
     session = Session(engine, query_cls=Query)
+    
+Flask-SQLAlchemy:
+
+.. code-block:: python
+
+    from flask.ext.sqlalchemy import SQLAlchemy
+
+    db = SQLAlchemy(app, session_options={'query_cls': Query})
+
+or
+
+.. code-block:: python
+
+    db = SQLAlchemy(session_options={'query_cls': Query})
+    db.init_app(app)
 
 License
 =======
