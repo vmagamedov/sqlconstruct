@@ -81,6 +81,7 @@ class TestConstruct(unittest.TestCase):
 
     def test_object_interface(self):
         obj = Object({'a': 1, 'b': 2})
+        self.assertEqual(repr(obj), 'Object({})'.format(repr({'a': 1, 'b': 2})))
         self.assertTrue(isinstance(obj, collections.Mapping), type(obj))
         self.assertEqual(obj.a, 1)
         self.assertEqual(obj['a'], 1)

@@ -126,7 +126,8 @@ class Object(immutabledict):
     __delattr__ = ImmutableContainer._immutable
 
     def __repr__(self):
-        return '%s(%s)' % (type(self).__name__, dict.__repr__(self))
+        return '{cls}({arg})'.format(cls=type(self).__name__,
+                                     arg=dict.__repr__(self))
 
     def __reduce__(self):
         return type(self), (dict(self),)
@@ -198,12 +199,12 @@ class apply_(Processable):
         eval_dict = {'__func__': self._func}
 
         for i, arg in enumerate(self._args):
-            args.append('__proc{i}__(row_map, row)'.format(i=i))
-            eval_dict['__proc{i}__'.format(i=i)] = _get_value_processor(arg)
+            args.append('__proc{0}__(row_map, row)'.format(i))
+            eval_dict['__proc{0}__'.format(i)] = _get_value_processor(arg)
 
         for key, arg in self._kwargs.items():
-            args.append('{key}=__{key}_proc__(row_map, row)'.format(key=key))
-            eval_dict['__{key}_proc__'.format(key=key)] = _get_value_processor(arg)
+            args.append('{0}=__{0}_proc__(row_map, row)'.format(key))
+            eval_dict['__{0}_proc__'.format(key)] = _get_value_processor(arg)
 
         processor_src = (
             'def __processor__(row_map, row):\n'
@@ -252,7 +253,7 @@ def define(func):
 
     signature = inspect.formatargspec(
         args=spec.args,
-        defaults=['__defaults__[%d]' % i
+        defaults=['__defaults__[{0}]'.format(i)
                   for i in range(len(spec.defaults or []))],
         formatvalue=lambda value: '=' + value,
     )
