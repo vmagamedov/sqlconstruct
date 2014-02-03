@@ -167,6 +167,12 @@ class Scope(object):
 
 class QueryBase(object):
 
+    def __hash__(self):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
     def __contains__(self, column):
         raise NotImplementedError
 
@@ -186,8 +192,6 @@ class SubQuery(QueryBase):
         self._ext_expr = ext_expr
         self._int_expr = int_expr
         self._sa_query = query
-        self._hash = hash((type(self), self._ext_expr,
-                           self._int_expr, self._sa_query))
 
     def __reference__(self):
         return self._ext_expr
@@ -196,7 +200,8 @@ class SubQuery(QueryBase):
         return [self._int_expr]
 
     def __hash__(self):
-        return self._hash
+        return hash((type(self), self._ext_expr,
+                     self._int_expr, self._sa_query))
 
     def __contains__(self, column):
         return any(el.c.contains_column(column)
@@ -231,6 +236,18 @@ class SubQuery(QueryBase):
                           result_row))
             )
         return [groups[ext_expr] for ext_expr in ext_exprs]
+
+
+class RelationAsListSubQuery(SubQuery):
+
+    def __init__(self, relationship_property):
+        self._relationship_property = relationship_property
+        ext_expr, int_expr = self._relationship_property.local_remote_pairs[0]
+        query = _SAQuery([self._relationship_property.mapper.class_])
+        super(RelationAsListSubQuery, self).__init__(ext_expr, int_expr, query)
+
+    def __hash__(self):
+        return hash((type(self), self._relationship_property))
 
 
 class Processable(object):
@@ -292,14 +309,6 @@ def _generative_proxy_query_method(unbound_method):
     return wrapper
 
 
-def _generative_proxy_query_method2(unbound_method):
-    func = unbound_method.im_func
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        return func(self, *args, **kwargs)
-    return wrapper
-
-
 class ConstructQuery(object):
 
     def __init__(self, session, spec):
@@ -317,14 +326,13 @@ class ConstructQuery(object):
     outerjoin   = _generative_proxy_query_method(_SAQuery.outerjoin)
     filter      = _generative_proxy_query_method(_SAQuery.filter)
 
+    all = _SAQuery.all.im_func
+
     def __iter__(self):
         rows = self._query.with_session(self._session.registry()).all()
         result = self._scope.query_plan.process_rows(rows)
         for r in self._scope.gen_loop()(result):
             yield Object(zip(self._keys, [proc(r) for proc in self._processors]))
-
-    def all(self):
-        return list(self)
 
 
 class Construct(Bundle):
@@ -404,9 +412,13 @@ class apply_(Processable):
 class map_(Processable):
 
     def __init__(self, func, collection):
-        # collection.parent.relationships[collection.key]
+        if isinstance(collection, SubQuery):
+            sub_query = collection
+        else:
+            rel_property = collection.parent.relationships[collection.key]
+            sub_query = RelationAsListSubQuery(rel_property)
         self._func = func
-        self._sub_query = collection
+        self._sub_query = sub_query
 
     def __processor__(self, scope):
         nested_scope = scope.nested(self._sub_query)
