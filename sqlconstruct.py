@@ -164,6 +164,11 @@ class Scope(object):
                 yield dict(result, **dict(item))
         return loop
 
+    def gen_getter(self):
+        def getter(result, _query_id=self.query_plan.query_id(self.query)):
+            return dict(result, **dict(result[_query_id]))
+        return getter
+
 
 class QueryBase(object):
 
@@ -186,12 +191,28 @@ class QueryBase(object):
         raise NotImplementedError
 
 
-class SubQuery(QueryBase):
+class ObjectSubQuery(QueryBase):
+    pass
 
-    def __init__(self, ext_expr, int_expr, query):
+
+class CollectionSubQuery(QueryBase):
+    pass
+
+
+class RelativeObjectSubQuery(QueryBase):
+
+    def __init__(self, ext_expr, int_expr, query, _hash=None):
         self._ext_expr = ext_expr
         self._int_expr = int_expr
         self._sa_query = query
+        self._hash = _hash or hash((type(self), ext_expr, int_expr, query))
+
+    @classmethod
+    def from_relation(cls, relation_property):
+        ext_expr, int_expr = relation_property.local_remote_pairs[0]
+        query = _SAQuery([relation_property.mapper.class_])
+        hash_ = hash((cls, relation_property))
+        return cls(ext_expr, int_expr, query, hash_)
 
     def __reference__(self):
         return self._ext_expr
@@ -200,8 +221,65 @@ class SubQuery(QueryBase):
         return [self._int_expr]
 
     def __hash__(self):
-        return hash((type(self), self._ext_expr,
-                     self._int_expr, self._sa_query))
+        return self._hash
+
+    def __contains__(self, column):
+        return any(el.c.contains_column(column)
+                   for el in self._sa_query.statement.froms)
+
+    def process(self, query_plan, outer_query, outer_rows):
+        ext_col_id = query_plan.column_id(outer_query, self._ext_expr)
+        ext_exprs = [row[ext_col_id] for row in outer_rows]
+        if ext_exprs:
+            columns = query_plan.query_columns(self) + (self._int_expr,)
+            rows = (
+                self._sa_query
+                .with_session(query_plan._session.registry())
+                .with_entities(*columns)
+                .filter(self._int_expr.in_(set(ext_exprs)))
+                .all()
+            )
+        else:
+            rows = []
+
+        children = query_plan.query_children(self)
+
+        queries = (self,) + children
+        results = (rows,) + tuple(child.process(query_plan, self, rows)
+                                  for child in children)
+
+        col_id = query_plan.column_id(self, self._int_expr)
+        mapping = {}
+        for result_row in zip(*results):
+            mapping[result_row[0][col_id]] = \
+                tuple(zip(map(query_plan.query_id, queries),
+                          result_row))
+        return [mapping.get(ext_expr) for ext_expr in ext_exprs]
+
+
+class RelativeCollectionSubQuery(QueryBase):
+
+    def __init__(self, ext_expr, int_expr, query, _hash=None):
+        self._ext_expr = ext_expr
+        self._int_expr = int_expr
+        self._sa_query = query
+        self._hash = _hash or hash((type(self), ext_expr, int_expr, query))
+
+    @classmethod
+    def from_relation(cls, relation_property):
+        ext_expr, int_expr = relation_property.local_remote_pairs[0]
+        query = _SAQuery([relation_property.mapper.class_])
+        hash_ = hash((cls, relation_property))
+        return cls(ext_expr, int_expr, query, hash_)
+
+    def __reference__(self):
+        return self._ext_expr
+
+    def __requires__(self):
+        return [self._int_expr]
+
+    def __hash__(self):
+        return self._hash
 
     def __contains__(self, column):
         return any(el.c.contains_column(column)
@@ -236,18 +314,6 @@ class SubQuery(QueryBase):
                           result_row))
             )
         return [groups[ext_expr] for ext_expr in ext_exprs]
-
-
-class RelationAsListSubQuery(SubQuery):
-
-    def __init__(self, relationship_property):
-        self._relationship_property = relationship_property
-        ext_expr, int_expr = self._relationship_property.local_remote_pairs[0]
-        query = _SAQuery([self._relationship_property.mapper.class_])
-        super(RelationAsListSubQuery, self).__init__(ext_expr, int_expr, query)
-
-    def __hash__(self):
-        return hash((type(self), self._relationship_property))
 
 
 class Processable(object):
@@ -412,11 +478,11 @@ class apply_(Processable):
 class map_(Processable):
 
     def __init__(self, func, collection):
-        if isinstance(collection, SubQuery):
+        if isinstance(collection, RelativeCollectionSubQuery):
             sub_query = collection
         else:
             rel_property = collection.parent.relationships[collection.key]
-            sub_query = RelationAsListSubQuery(rel_property)
+            sub_query = RelativeCollectionSubQuery.from_relation(rel_property)
         self._func = func
         self._sub_query = sub_query
 
@@ -426,6 +492,26 @@ class map_(Processable):
         loop = nested_scope.gen_loop()
         def process(result):
             return [func_proc(item) for item in loop(result)]
+        return process
+
+
+class get_(Processable):
+
+    def __init__(self, func, obj):
+        if isinstance(obj, RelativeObjectSubQuery):
+            sub_query = obj
+        else:
+            rel_property = obj.parent.relationships[obj.key]
+            sub_query = RelativeObjectSubQuery.from_relation(rel_property)
+        self._func = func
+        self._sub_query = sub_query
+
+    def __processor__(self, scope):
+        nested_scope = scope.nested(self._sub_query)
+        func_proc = _get_value_processor(nested_scope, self._func)
+        getter = nested_scope.gen_getter()
+        def process(result):
+            return func_proc(getter(result))
         return process
 
 
