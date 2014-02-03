@@ -254,7 +254,14 @@ class RelativeObjectSubQuery(QueryBase):
             mapping[result_row[0][col_id]] = \
                 tuple(zip(map(query_plan.query_id, queries),
                           result_row))
-        return [mapping.get(ext_expr) for ext_expr in ext_exprs]
+
+        nulls = (
+            (query_plan.query_id(self),
+             tuple(None for _ in query_plan.query_columns(self))),
+        )
+
+        return [mapping.get(ext_expr) if ext_expr in mapping else nulls
+                for ext_expr in ext_exprs]
 
 
 class RelativeCollectionSubQuery(QueryBase):
