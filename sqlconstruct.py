@@ -280,8 +280,14 @@ class _RelativeCollectionSubQuery(_QueryBase):
 
     @classmethod
     def from_relation(cls, relation_property):
-        ext_expr, int_expr = relation_property.local_remote_pairs[0]
-        query = _SAQuery([relation_property.mapper.class_])
+        if relation_property.secondary is not None:
+            ext_expr, int_expr = relation_property.local_remote_pairs[0]
+            query = (_SAQuery([relation_property.mapper.class_])
+                     .join(relation_property.secondary,
+                           relation_property.secondaryjoin))
+        else:
+            ext_expr, int_expr = relation_property.local_remote_pairs[0]
+            query = _SAQuery([relation_property.mapper.class_])
         hash_ = hash((cls, relation_property))
         return cls(ext_expr, int_expr, query, hash_)
 
@@ -404,6 +410,7 @@ class ConstructQuery(object):
     join        = _generative_proxy_query_method(_SAQuery.join)
     outerjoin   = _generative_proxy_query_method(_SAQuery.outerjoin)
     filter      = _generative_proxy_query_method(_SAQuery.filter)
+    order_by    = _generative_proxy_query_method(_SAQuery.order_by)
 
     all = _im_func(_SAQuery.all)
 
@@ -494,8 +501,8 @@ class map_(Processable):
         if isinstance(collection, _RelativeCollectionSubQuery):
             sub_query = collection
         else:
-            rel_property = collection.parent.relationships[collection.key]
-            sub_query = _RelativeCollectionSubQuery.from_relation(rel_property)
+            sub_query = (_RelativeCollectionSubQuery
+                         .from_relation(collection.property))
         self._func = func
         self._sub_query = sub_query
 
@@ -514,8 +521,7 @@ class get_(Processable):
         if isinstance(obj, _RelativeObjectSubQuery):
             sub_query = obj
         else:
-            rel_property = obj.parent.relationships[obj.key]
-            sub_query = _RelativeObjectSubQuery.from_relation(rel_property)
+            sub_query = _RelativeObjectSubQuery.from_relation(obj.property)
         self._func = func
         self._sub_query = sub_query
 

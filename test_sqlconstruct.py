@@ -1,5 +1,6 @@
 import sys
 import pickle
+import string
 import inspect
 import operator
 import collections
@@ -10,9 +11,11 @@ except ImportError:
     import unittest
 
 import sqlalchemy
-from sqlalchemy import Column, String, Integer, create_engine, ForeignKey, func
+from sqlalchemy import Table, Column, String, Integer, ForeignKey
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import Session, Query as QueryBase, relationship, aliased
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.ext.declarative import declarative_base, DeclarativeMeta
 
 
 PY3 = sys.version_info[0] == 3
@@ -27,7 +30,7 @@ else:
 
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
-from sqlconstruct import _Scope, _QueryPlan
+from sqlconstruct import ConstructQuery, map_, get_, _Scope, _QueryPlan
 
 
 if SQLA_ge_09:
@@ -59,21 +62,25 @@ def proceed(processable, mapping):
     return processor(result)
 
 
+class BaseMeta(DeclarativeMeta):
+
+    def __new__(mcs, name, bases, attrs):
+        attrs.setdefault('__tablename__', name.lower())
+        attrs.setdefault('id', Column(Integer, primary_key=True))
+        return DeclarativeMeta.__new__(mcs, name, bases, attrs)
+
+
 class TestConstruct(unittest.TestCase):
 
     def setUp(self):
         engine = create_engine('sqlite://')
-        base_cls = declarative_base()
+        base_cls = declarative_base(metaclass=BaseMeta)
 
         self.a_cls = type('A', (base_cls,), dict(
-            __tablename__='a',
-            id=Column(Integer, primary_key=True),
             name=Column(String),
         ))
 
         self.b_cls = type('B', (base_cls,), dict(
-            __tablename__='b',
-            id=Column(Integer, primary_key=True),
             name=Column(String),
             a_id=Column(Integer, ForeignKey('a.id')),
             a=relationship('A'),
@@ -652,3 +659,176 @@ class TestConstruct(unittest.TestCase):
         out2.close()
 
         self.assertEqual(stats1.total_calls, stats2.total_calls)
+
+
+class TestSubQueries(unittest.TestCase):
+
+    def setUp(self):
+        self.engine = create_engine('sqlite://')
+        self.base_cls = declarative_base(metaclass=BaseMeta)
+
+    def init(self):
+        self.base_cls.metadata.create_all(self.engine)
+        session = scoped_session(sessionmaker())
+        session.configure(bind=self.engine)
+        return session
+
+    def test_many_to_one(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            b_id = Column(Integer, ForeignKey('b.id'))
+            b = relationship('B')
+
+        class B(self.base_cls):
+            name = Column(String)
+
+        session = self.init()
+        b1, b2, b3 = B(name='b1'), B(name='b2'), B(name='b3')
+        session.add_all([
+            A(name='a1', b=b1), A(name='a2', b=b1), A(name='a3', b=b1),
+            A(name='a4', b=b2), A(name='a5', b=b2), A(name='a6', b=b2),
+            A(name='a7', b=b3), A(name='a8', b=b3), A(name='a9', b=b3),
+        ])
+        session.commit()
+
+        query = (
+            ConstructQuery(session, {
+                'a_name': A.name,
+                'b_name': get_(apply_(string.capitalize, [B.name]), A.b),
+            })
+        )
+        self.assertEqual(
+            tuple(dict(obj) for obj in query.all()),
+            ({'a_name': 'a1', 'b_name': 'B1'},
+             {'a_name': 'a2', 'b_name': 'B1'},
+             {'a_name': 'a3', 'b_name': 'B1'},
+             {'a_name': 'a4', 'b_name': 'B2'},
+             {'a_name': 'a5', 'b_name': 'B2'},
+             {'a_name': 'a6', 'b_name': 'B2'},
+             {'a_name': 'a7', 'b_name': 'B3'},
+             {'a_name': 'a8', 'b_name': 'B3'},
+             {'a_name': 'a9', 'b_name': 'B3'}),
+        )
+
+    def test_one_to_one(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            b = relationship('B', uselist=False)
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_id = Column(Integer, ForeignKey('a.id'))
+
+        session = self.init()
+        session.add_all([
+            A(name='a1', b=B(name='b1')),
+            A(name='a2', b=B(name='b2')),
+            A(name='a3', b=B(name='b3')),
+        ])
+        session.commit()
+
+        query = (
+            ConstructQuery(session, {
+                'a_name': A.name,
+                'b_name': get_(apply_(string.capitalize, [B.name]), A.b),
+            })
+        )
+        self.assertEqual(
+            tuple(dict(obj) for obj in query.all()),
+            ({'a_name': 'a1', 'b_name': 'B1'},
+             {'a_name': 'a2', 'b_name': 'B2'},
+             {'a_name': 'a3', 'b_name': 'B3'}),
+        )
+
+    def test_one_to_many(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            b_list = relationship('B')
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_id = Column(Integer, ForeignKey('a.id'))
+
+        session = self.init()
+        session.add_all([
+            A(name='a1', b_list=[B(name='b1'), B(name='b2'), B(name='b3')]),
+            A(name='a2', b_list=[B(name='b4'), B(name='b5'), B(name='b6')]),
+            A(name='a3', b_list=[B(name='b7'), B(name='b8'), B(name='b9')]),
+        ])
+        session.commit()
+
+        query = (
+            ConstructQuery(session, {
+                'a_name': A.name,
+                'b_names': map_(apply_(string.capitalize, [B.name]), A.b_list),
+            })
+        )
+        self.assertEqual(
+            tuple(dict(obj) for obj in query.all()),
+            ({'a_name': 'a1', 'b_names': ['B1', 'B2', 'B3']},
+             {'a_name': 'a2', 'b_names': ['B4', 'B5', 'B6']},
+             {'a_name': 'a3', 'b_names': ['B7', 'B8', 'B9']}),
+        )
+
+    def test_many_to_many(self):
+        ab_table = Table(
+            'a_b',
+            self.base_cls.metadata,
+            Column('a_id', Integer, ForeignKey('a.id')),
+            Column('b_id', Integer, ForeignKey('b.id'))
+        )
+
+        class A(self.base_cls):
+            name = Column(String)
+            b_list = relationship('B', secondary=ab_table)
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_list = relationship('A', secondary=ab_table)
+
+        session = self.init()
+        a1, a2, a3, a4 = A(name='a1'), A(name='a2'), A(name='a3'), A(name='a4')
+        b1, b2, b3, b4 = B(name='b1'), B(name='b2'), B(name='b3'), B(name='b4')
+        a1.b_list = [b2, b3, b4]
+        a2.b_list = [b1, b3, b4]
+        a3.b_list = [b1, b2, b4]
+        a4.b_list = [b1, b2, b3]
+        session.add_all([a1, a2, a3, a4])
+        session.commit()
+
+        q1 = (
+            ConstructQuery(session, {
+                'a_name': A.name,
+                'b_names': map_(apply_(string.capitalize, [B.name]), A.b_list),
+            })
+            .order_by(A.name)
+        )
+        self.assertEqual(
+            tuple((obj.a_name, set(obj.b_names)) for obj in q1.all()),
+            (
+                ('a1', {'B2', 'B3', 'B4'}),
+                ('a2', {'B1', 'B3', 'B4'}),
+                ('a3', {'B1', 'B2', 'B4'}),
+                ('a4', {'B1', 'B2', 'B3'}),
+            )
+        )
+
+        q2 = (
+            ConstructQuery(session, {
+                'b_name': B.name,
+                'a_names': map_(apply_(string.capitalize, [A.name]), B.a_list),
+            })
+            .order_by(B.name)
+        )
+        self.assertEqual(
+            tuple((obj.b_name, set(obj.a_names)) for obj in q2.all()),
+            (
+                ('b1', {'A2', 'A3', 'A4'}),
+                ('b2', {'A1', 'A3', 'A4'}),
+                ('b3', {'A1', 'A2', 'A4'}),
+                ('b4', {'A1', 'A2', 'A3'}),
+            ),
+        )
