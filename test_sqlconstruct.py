@@ -27,7 +27,7 @@ else:
 
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
-from sqlconstruct import Scope, QueryPlan
+from sqlconstruct import _Scope, _QueryPlan
 
 
 if SQLA_ge_09:
@@ -46,13 +46,13 @@ def defined_func(a, b, extra_id=0, extra_name=''):
 
 
 def columns_set(processable):
-    scope = Scope(QueryPlan())
+    scope = _Scope(_QueryPlan())
     processable.__processor__(scope)
     return set(scope.query_plan.query_columns(None))
 
 
 def proceed(processable, mapping):
-    scope = Scope(QueryPlan())
+    scope = _Scope(_QueryPlan())
     processor = processable.__processor__(scope)
     columns = scope.query_plan.query_columns(None)
     result = {0: [mapping[col] for col in columns]}

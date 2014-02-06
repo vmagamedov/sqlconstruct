@@ -60,6 +60,7 @@ if PY3:
     _map = map
     _range = range
     _iteritems = dict.items
+    _im_func = lambda m: m
 
 else:
     def _exec_in(source, globals_dict):
@@ -68,6 +69,7 @@ else:
     from itertools import imap as _map
     _range = xrange
     _iteritems = dict.iteritems
+    _im_func = lambda m: m.im_func
 
 
 if SQLA_ge_09:
@@ -78,10 +80,14 @@ else:
             pass
 
 
-__all__ = ('Construct', 'if_', 'apply_', 'define', 'QueryMixin')
+__all__ = (
+    'ConstructQuery', 'Construct',
+    'if_', 'apply_', 'map_', 'get_', 'define',
+    'QueryMixin',
+)
 
 
-class QueryPlan(object):
+class _QueryPlan(object):
 
     def __init__(self, session=None):
         self._session = session
@@ -120,7 +126,7 @@ class QueryPlan(object):
         ]}
 
 
-class Scope(object):
+class _Scope(object):
 
     def __init__(self, query_plan, query=None, parent=None):
         self.query_plan = query_plan
@@ -170,7 +176,7 @@ class Scope(object):
         return getter
 
 
-class QueryBase(object):
+class _QueryBase(object):
 
     def __hash__(self):
         raise NotImplementedError
@@ -191,15 +197,15 @@ class QueryBase(object):
         raise NotImplementedError
 
 
-class ObjectSubQuery(QueryBase):
+class _ObjectSubQuery(_QueryBase):
     pass
 
 
-class CollectionSubQuery(QueryBase):
+class _CollectionSubQuery(_QueryBase):
     pass
 
 
-class RelativeObjectSubQuery(QueryBase):
+class _RelativeObjectSubQuery(_QueryBase):
 
     def __init__(self, ext_expr, int_expr, query, _hash=None):
         self._ext_expr = ext_expr
@@ -264,7 +270,7 @@ class RelativeObjectSubQuery(QueryBase):
                 for ext_expr in ext_exprs]
 
 
-class RelativeCollectionSubQuery(QueryBase):
+class _RelativeCollectionSubQuery(_QueryBase):
 
     def __init__(self, ext_expr, int_expr, query, _hash=None):
         self._ext_expr = ext_expr
@@ -363,7 +369,7 @@ class Object(immutabledict):
 
 
 def _proxy_query_method(unbound_method):
-    func = unbound_method.im_func
+    func = _im_func(unbound_method)
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         return func(self._query, *args, **kwargs)
@@ -371,7 +377,7 @@ def _proxy_query_method(unbound_method):
 
 
 def _generative_proxy_query_method(unbound_method):
-    func = unbound_method.im_func
+    func = _im_func(unbound_method)
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         cls = type(self)
@@ -388,7 +394,7 @@ class ConstructQuery(object):
         self._session = session
         self._spec = spec
         self._keys, self._values = zip(*spec.items()) if spec else [(), ()]
-        self._scope = Scope(QueryPlan(session))
+        self._scope = _Scope(_QueryPlan(session))
         self._processors = [_get_value_processor(self._scope, val)
                             for val in self._values]
         self._query = _SAQuery(self._scope.query_plan.query_columns(None))
@@ -399,7 +405,7 @@ class ConstructQuery(object):
     outerjoin   = _generative_proxy_query_method(_SAQuery.outerjoin)
     filter      = _generative_proxy_query_method(_SAQuery.filter)
 
-    all = _SAQuery.all.im_func
+    all = _im_func(_SAQuery.all)
 
     def __iter__(self):
         rows = self._query.with_session(self._session.registry()).all()
@@ -413,7 +419,7 @@ class Construct(Bundle):
 
     def __init__(self, spec):
         self._keys, self._values = zip(*spec.items()) if spec else [(), ()]
-        self._scope = Scope(QueryPlan())
+        self._scope = _Scope(_QueryPlan())
         self._processors = [_get_value_processor(self._scope, val)
                             for val in self._values]
         self._range = tuple(_range(len(self._keys)))
@@ -485,11 +491,11 @@ class apply_(Processable):
 class map_(Processable):
 
     def __init__(self, func, collection):
-        if isinstance(collection, RelativeCollectionSubQuery):
+        if isinstance(collection, _RelativeCollectionSubQuery):
             sub_query = collection
         else:
             rel_property = collection.parent.relationships[collection.key]
-            sub_query = RelativeCollectionSubQuery.from_relation(rel_property)
+            sub_query = _RelativeCollectionSubQuery.from_relation(rel_property)
         self._func = func
         self._sub_query = sub_query
 
@@ -505,11 +511,11 @@ class map_(Processable):
 class get_(Processable):
 
     def __init__(self, func, obj):
-        if isinstance(obj, RelativeObjectSubQuery):
+        if isinstance(obj, _RelativeObjectSubQuery):
             sub_query = obj
         else:
             rel_property = obj.parent.relationships[obj.key]
-            sub_query = RelativeObjectSubQuery.from_relation(rel_property)
+            sub_query = _RelativeObjectSubQuery.from_relation(rel_property)
         self._func = func
         self._sub_query = sub_query
 
