@@ -37,6 +37,7 @@
 import sys
 import inspect
 from operator import attrgetter
+from itertools import chain
 from functools import partial, wraps
 from collections import defaultdict
 
@@ -167,12 +168,12 @@ class _Scope(object):
         def loop(result, _query_id=self.query_plan.query_id(self.query)):
             for item in result[_query_id]:
                 # TODO: optimize
-                yield dict(result, **dict(item))
+                yield dict(chain(_iteritems(result), item))
         return loop
 
     def gen_getter(self):
         def getter(result, _query_id=self.query_plan.query_id(self.query)):
-            return dict(result, **dict(result[_query_id]))
+            return dict(chain(_iteritems(result), result[_query_id]))
         return getter
 
 

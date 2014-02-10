@@ -1,6 +1,5 @@
 import sys
 import pickle
-import string
 import inspect
 import operator
 import collections
@@ -39,6 +38,9 @@ if SQLA_ge_09:
 else:
     class Query(QueryMixin, QueryBase):
         pass
+
+
+capitalize = lambda s: s.capitalize()
 
 
 @define
@@ -695,7 +697,7 @@ class TestSubQueries(unittest.TestCase):
         query = (
             ConstructQuery(session, {
                 'a_name': A.name,
-                'b_name': get_(apply_(string.capitalize, [B.name]), A.b),
+                'b_name': get_(apply_(capitalize, [B.name]), A.b),
             })
         )
         self.assertEqual(
@@ -732,7 +734,7 @@ class TestSubQueries(unittest.TestCase):
         query = (
             ConstructQuery(session, {
                 'a_name': A.name,
-                'b_name': get_(apply_(string.capitalize, [B.name]), A.b),
+                'b_name': get_(apply_(capitalize, [B.name]), A.b),
             })
         )
         self.assertEqual(
@@ -763,7 +765,7 @@ class TestSubQueries(unittest.TestCase):
         query = (
             ConstructQuery(session, {
                 'a_name': A.name,
-                'b_names': map_(apply_(string.capitalize, [B.name]), A.b_list),
+                'b_names': map_(apply_(capitalize, [B.name]), A.b_list),
             })
         )
         self.assertEqual(
@@ -802,7 +804,7 @@ class TestSubQueries(unittest.TestCase):
         q1 = (
             ConstructQuery(session, {
                 'a_name': A.name,
-                'b_names': map_(apply_(string.capitalize, [B.name]), A.b_list),
+                'b_names': map_(apply_(capitalize, [B.name]), A.b_list),
             })
             .order_by(A.name)
         )
@@ -819,7 +821,7 @@ class TestSubQueries(unittest.TestCase):
         q2 = (
             ConstructQuery(session, {
                 'b_name': B.name,
-                'a_names': map_(apply_(string.capitalize, [A.name]), B.a_list),
+                'a_names': map_(apply_(capitalize, [A.name]), B.a_list),
             })
             .order_by(B.name)
         )
