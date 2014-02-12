@@ -695,10 +695,11 @@ class TestSubQueries(unittest.TestCase):
         session.commit()
 
         query = (
-            ConstructQuery(session, {
+            ConstructQuery({
                 'a_name': A.name,
                 'b_name': get_(apply_(capitalize, [B.name]), A.b),
             })
+            .with_session(session.registry())
         )
         self.assertEqual(
             tuple(dict(obj) for obj in query.all()),
@@ -732,10 +733,11 @@ class TestSubQueries(unittest.TestCase):
         session.commit()
 
         query = (
-            ConstructQuery(session, {
+            ConstructQuery({
                 'a_name': A.name,
                 'b_name': get_(apply_(capitalize, [B.name]), A.b),
             })
+            .with_session(session.registry())
         )
         self.assertEqual(
             tuple(dict(obj) for obj in query.all()),
@@ -763,10 +765,11 @@ class TestSubQueries(unittest.TestCase):
         session.commit()
 
         query = (
-            ConstructQuery(session, {
+            ConstructQuery({
                 'a_name': A.name,
                 'b_names': map_(apply_(capitalize, [B.name]), A.b_list),
             })
+            .with_session(session.registry())
         )
         self.assertEqual(
             tuple(dict(obj) for obj in query.all()),
@@ -802,10 +805,11 @@ class TestSubQueries(unittest.TestCase):
         session.commit()
 
         q1 = (
-            ConstructQuery(session, {
+            ConstructQuery({
                 'a_name': A.name,
                 'b_names': map_(apply_(capitalize, [B.name]), A.b_list),
             })
+            .with_session(session.registry())
             .order_by(A.name)
         )
         self.assertEqual(
@@ -819,10 +823,11 @@ class TestSubQueries(unittest.TestCase):
         )
 
         q2 = (
-            ConstructQuery(session, {
+            ConstructQuery({
                 'b_name': B.name,
                 'a_names': map_(apply_(capitalize, [A.name]), B.a_list),
             })
+            .with_session(session.registry())
             .order_by(B.name)
         )
         self.assertEqual(

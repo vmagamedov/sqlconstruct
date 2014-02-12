@@ -90,8 +90,7 @@ __all__ = (
 
 class _QueryPlan(object):
 
-    def __init__(self, session=None):
-        self._session = session
+    def __init__(self):
         self._queries = OrderedSet({None})
         self._columns = defaultdict(OrderedSet)
         self._children = defaultdict(OrderedSet)
@@ -115,10 +114,10 @@ class _QueryPlan(object):
     def query_children(self, query):
         return tuple(self._children.get(query) or ())
 
-    def process_rows(self, rows):
+    def process_rows(self, rows, session):
         children = self.query_children(None)
         queries = (None,) + children
-        results = (rows,) + tuple(child.process(self, None, rows)
+        results = (rows,) + tuple(child.process(self, None, rows, session)
                                   for child in children)
         return {0: [
             tuple(zip(map(self.query_id, queries),
@@ -142,7 +141,7 @@ class _Scope(object):
     def lookup(self, column):
         scope = self
         while scope.query:
-            if column in scope.query:
+            if scope.query.__contains_column__(column):
                 return scope
             scope = scope.parent
         return scope
@@ -185,7 +184,7 @@ class _QueryBase(object):
     def __eq__(self, other):
         return hash(self) == hash(other)
 
-    def __contains__(self, column):
+    def __contains_column__(self, column):
         raise NotImplementedError
 
     def __reference__(self):
@@ -194,7 +193,7 @@ class _QueryBase(object):
     def __requires__(self):
         return tuple()
 
-    def process(self, query_plan, outer_query, outer_rows):
+    def process(self, query_plan, outer_query, outer_rows, session):
         raise NotImplementedError
 
 
@@ -230,18 +229,18 @@ class _RelativeObjectSubQuery(_QueryBase):
     def __hash__(self):
         return self._hash
 
-    def __contains__(self, column):
+    def __contains_column__(self, column):
         return any(el.c.contains_column(column)
                    for el in self._sa_query.statement.froms)
 
-    def process(self, query_plan, outer_query, outer_rows):
+    def process(self, query_plan, outer_query, outer_rows, session):
         ext_col_id = query_plan.column_id(outer_query, self._ext_expr)
         ext_exprs = [row[ext_col_id] for row in outer_rows]
         if ext_exprs:
             columns = query_plan.query_columns(self) + (self._int_expr,)
             rows = (
                 self._sa_query
-                .with_session(query_plan._session.registry())
+                .with_session(session)
                 .with_entities(*columns)
                 .filter(self._int_expr.in_(set(ext_exprs)))
                 .all()
@@ -301,18 +300,18 @@ class _RelativeCollectionSubQuery(_QueryBase):
     def __hash__(self):
         return self._hash
 
-    def __contains__(self, column):
+    def __contains_column__(self, column):
         return any(el.c.contains_column(column)
                    for el in self._sa_query.statement.froms)
 
-    def process(self, query_plan, outer_query, outer_rows):
+    def process(self, query_plan, outer_query, outer_rows, session):
         ext_col_id = query_plan.column_id(outer_query, self._ext_expr)
         ext_exprs = [row[ext_col_id] for row in outer_rows]
         if ext_exprs:
             columns = query_plan.query_columns(self) + (self._int_expr,)
             rows = (
                 self._sa_query
-                .with_session(query_plan._session.registry())
+                .with_session(session)
                 .with_entities(*columns)
                 .filter(self._int_expr.in_(ext_exprs))
                 .all()
@@ -375,51 +374,30 @@ class Object(immutabledict):
         return type(self), (dict(self),)
 
 
-def _proxy_query_method(unbound_method):
-    func = _im_func(unbound_method)
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        return func(self._query, *args, **kwargs)
-    return wrapper
+class ConstructQueryMixin(object):
 
+    def __init__(self, spec):
+        self._cq_keys, values = zip(*spec.items()) if spec else [(), ()]
+        self._cq_scope = _Scope(_QueryPlan())
+        self._cq_procs = [_get_value_processor(self._cq_scope, val)
+                          for val in values]
 
-def _generative_proxy_query_method(unbound_method):
-    func = _im_func(unbound_method)
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        cls = type(self)
-        clone = cls.__new__(cls)
-        clone.__dict__.update(self.__dict__)
-        clone._query = func(clone._query, *args, **kwargs)
-        return clone
-    return wrapper
-
-
-class ConstructQuery(object):
-
-    def __init__(self, session, spec):
-        self._session = session
-        self._spec = spec
-        self._keys, self._values = zip(*spec.items()) if spec else [(), ()]
-        self._scope = _Scope(_QueryPlan(session))
-        self._processors = [_get_value_processor(self._scope, val)
-                            for val in self._values]
-        self._query = _SAQuery(self._scope.query_plan.query_columns(None))
-
-    __str__     = _proxy_query_method(_SAQuery.__str__)
-
-    join        = _generative_proxy_query_method(_SAQuery.join)
-    outerjoin   = _generative_proxy_query_method(_SAQuery.outerjoin)
-    filter      = _generative_proxy_query_method(_SAQuery.filter)
-    order_by    = _generative_proxy_query_method(_SAQuery.order_by)
-
-    all = _im_func(_SAQuery.all)
+        columns = self._cq_scope.query_plan.query_columns(None)
+        super(ConstructQueryMixin, self).__init__(columns)
 
     def __iter__(self):
-        rows = self._query.with_session(self._session.registry()).all()
-        result = self._scope.query_plan.process_rows(rows)
-        for r in self._scope.gen_loop()(result):
-            yield Object(zip(self._keys, [proc(r) for proc in self._processors]))
+        rows = list(super(ConstructQueryMixin, self).__iter__())
+        result = self._cq_scope.query_plan.process_rows(rows, self.session)
+        for r in self._cq_scope.gen_loop()(result):
+            values = [proc(r) for proc in self._cq_procs]
+            yield Object(zip(self._cq_keys, values))
+
+
+def construct_query_maker(base_cls):
+    return type('ConstructQuery', (ConstructQueryMixin, base_cls), {})
+
+
+ConstructQuery = construct_query_maker(_SAQuery)
 
 
 class Construct(Bundle):
