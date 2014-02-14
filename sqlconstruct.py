@@ -38,7 +38,7 @@ import sys
 import inspect
 from operator import attrgetter
 from itertools import chain
-from functools import partial, wraps
+from functools import partial
 from collections import defaultdict
 
 import sqlalchemy
@@ -116,14 +116,12 @@ class _QueryPlan(object):
 
     def process_rows(self, rows, session):
         children = self.query_children(None)
-        queries = (None,) + children
-        results = (rows,) + tuple(child.process(self, None, rows, session)
-                                  for child in children)
-        return {0: [
-            tuple(zip(map(self.query_id, queries),
-                      result_row))
-            for result_row in zip(*results)
-        ]}
+
+        _results = [[((self.query_id(None), row),) for row in rows]]
+        _results.extend(child.process(self, None, rows, session)
+                        for child in children)
+
+        return {0: [tuple(chain(*r)) for r in zip(*_results)]}
 
 
 class _Scope(object):
@@ -169,11 +167,6 @@ class _Scope(object):
                 # TODO: optimize
                 yield dict(chain(_iteritems(result), item))
         return loop
-
-    def gen_getter(self):
-        def getter(result, _query_id=self.query_plan.query_id(self.query)):
-            return dict(chain(_iteritems(result), result[_query_id]))
-        return getter
 
 
 class _QueryBase(object):
@@ -250,24 +243,22 @@ class _RelativeObjectSubQuery(_QueryBase):
 
         children = query_plan.query_children(self)
 
-        queries = (self,) + children
-        results = (rows,) + tuple(child.process(query_plan, self, rows)
-                                  for child in children)
+        _results = [[((query_plan.query_id(self), row),) for row in rows]]
+        _results.extend(child.process(query_plan, self, rows, session)
+                        for child in children)
 
-        col_id = query_plan.column_id(self, self._int_expr)
         mapping = {}
-        for result_row in zip(*results):
-            mapping[result_row[0][col_id]] = \
-                tuple(zip(map(query_plan.query_id, queries),
-                          result_row))
+        for r in zip(*_results):
+            r = tuple(chain(*r))
+            _, row = r[0]
+            mapping[row[-1]] = r
 
         nulls = (
             (query_plan.query_id(self),
              tuple(None for _ in query_plan.query_columns(self))),
         )
 
-        return [mapping.get(ext_expr) if ext_expr in mapping else nulls
-                for ext_expr in ext_exprs]
+        return [mapping.get(ext_expr, nulls) for ext_expr in ext_exprs]
 
 
 class _RelativeCollectionSubQuery(_QueryBase):
@@ -321,18 +312,18 @@ class _RelativeCollectionSubQuery(_QueryBase):
 
         children = query_plan.query_children(self)
 
-        queries = (self,) + children
-        results = (rows,) + tuple(child.process(query_plan, self, rows)
-                                  for child in children)
+        _results = [[((query_plan.query_id(self), row),) for row in rows]]
+        _results.extend(child.process(query_plan, self, rows, session)
+                        for child in children)
 
-        col_id = query_plan.column_id(self, self._int_expr)
         groups = defaultdict(list)
-        for result_row in zip(*results):
-            groups[result_row[0][col_id]].append(
-                tuple(zip(map(query_plan.query_id, queries),
-                          result_row))
-            )
-        return [groups[ext_expr] for ext_expr in ext_exprs]
+        for r in zip(*_results):
+            r = tuple(chain(*r))
+            _, row = r[0]
+            groups[row[-1]].append(r)
+
+        return [((query_plan.query_id(self), groups[ext_expr]),)
+                for ext_expr in ext_exprs]
 
 
 class Processable(object):
@@ -506,11 +497,7 @@ class get_(Processable):
 
     def __processor__(self, scope):
         nested_scope = scope.nested(self._sub_query)
-        func_proc = _get_value_processor(nested_scope, self._func)
-        getter = nested_scope.gen_getter()
-        def process(result):
-            return func_proc(getter(result))
-        return process
+        return _get_value_processor(nested_scope, self._func)
 
 
 class _arg_helper(object):
