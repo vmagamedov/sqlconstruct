@@ -365,21 +365,26 @@ class Object(immutabledict):
 
 class ConstructQueryMixin(object):
 
-    def __init__(self, spec):
-        self._cq_keys, values = zip(*spec.items()) if spec else [(), ()]
-        self._cq_scope = _Scope(_QueryPlan())
-        self._cq_procs = [_get_value_processor(self._cq_scope, val)
-                          for val in values]
+    def __init__(self, spec, scoped_session=None):
+        self.__keys, values = zip(*spec.items()) if spec else [(), ()]
+        self.__scope = _Scope(_QueryPlan())
+        self.__procs = [_get_value_processor(self.__scope, val)
+                        for val in values]
+        self.__scoped_session = scoped_session
 
-        columns = self._cq_scope.query_plan.query_columns(None)
+        columns = self.__scope.query_plan.query_columns(None)
         super(ConstructQueryMixin, self).__init__(columns)
 
     def __iter__(self):
-        rows = list(super(ConstructQueryMixin, self).__iter__())
-        result = self._cq_scope.query_plan.process_rows(rows, self.session)
-        for r in self._cq_scope.gen_loop()(result):
-            values = [proc(r) for proc in self._cq_procs]
-            yield Object(zip(self._cq_keys, values))
+        query = self
+        if self.__scoped_session is not None:
+            query = query.with_session(self.__scoped_session.registry())
+
+        rows = list(super(ConstructQueryMixin, query).__iter__())
+        result = self.__scope.query_plan.process_rows(rows, query.session)
+        for r in self.__scope.gen_loop()(result):
+            values = [proc(r) for proc in self.__procs]
+            yield Object(zip(self.__keys, values))
 
 
 def construct_query_maker(base_cls):

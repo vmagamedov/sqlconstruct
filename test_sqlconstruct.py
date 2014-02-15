@@ -990,3 +990,19 @@ class TestSubQueries(unittest.TestCase):
              {'full_name': 'A8 B3'},
              {'full_name': 'A9 B3'}),
         )
+
+    def test_with_scoped_session(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+
+        session = self.init()
+        session.add_all([A(name='a1'), A(name='a2'), A(name='a3')])
+        session.commit()
+
+        q1 = ConstructQuery({'name': A.name}, session)
+        self.assertEqual({obj.name for obj in q1.all()}, {'a1', 'a2', 'a3'})
+
+        q2 = ConstructQuery({'name': A.name})
+        with self.assertRaises(AttributeError):
+            q2.all()
