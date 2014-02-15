@@ -36,16 +36,16 @@
 """
 import sys
 import inspect
-from operator import attrgetter
 from itertools import chain
 from functools import partial
 from collections import defaultdict
 
 import sqlalchemy
 from sqlalchemy.sql import ColumnElement
+from sqlalchemy.orm import RelationshipProperty
 from sqlalchemy.util import immutabledict, ImmutableContainer, OrderedSet
 from sqlalchemy.orm.query import Query as _SAQuery, _QueryEntity
-from sqlalchemy.orm.attributes import QueryableAttribute
+from sqlalchemy.orm.attributes import QueryableAttribute, InstrumentedAttribute
 
 
 PY3 = sys.version_info[0] == 3
@@ -58,7 +58,6 @@ if PY3:
     def _exec_in(source, globals_dict):
         getattr(builtins, 'exec')(source, globals_dict)
 
-    _map = map
     _range = range
     _iteritems = dict.items
     _im_func = lambda m: m
@@ -67,7 +66,6 @@ else:
     def _exec_in(source, globals_dict):
         exec('exec source in globals_dict')
 
-    from itertools import imap as _map
     _range = xrange
     _iteritems = dict.iteritems
     _im_func = lambda m: m.im_func
@@ -500,13 +498,45 @@ class get_(Processable):
         return _get_value_processor(nested_scope, self._func)
 
 
-class _arg_helper(object):
+class _ArgNameHelper(object):
 
     def __init__(self, name):
-        self.__name__ = name
+        self.__argname__ = name
 
-    def __getattr__(self, attr_name):
-        return _arg_helper(self.__name__ + '.' + attr_name)
+    def __getattr__(self, name):
+        return _ArgNameAttrHelper(self.__argname__ + '.' + name)
+
+
+class _ArgNameAttrHelper(_ArgNameHelper):
+
+    def __getattr__(self, name):
+        raise AttributeError('It is not allowed to access second-level '
+                             'attributes in the function definition')
+
+
+class _ArgValueHelper(object):
+
+    def __init__(self, arg):
+        self.__value__ = arg
+
+    def __getattr__(self, name):
+        if (isinstance(self.__value__, InstrumentedAttribute) and
+            isinstance(self.__value__.property, RelationshipProperty)):
+            column = getattr(self.__value__.property.mapper.class_, name)
+            return _ArgValueAttrHelper(get_(column, self.__value__))
+        return _ArgValueAttrHelper(getattr(self.__value__, name))
+
+
+class _ArgValueAttrHelper(_ArgValueHelper):
+
+    def __getattr__(self, name):
+        raise AttributeError('It is not allowed to access second-level '
+                             'attributes in the function definition')
+
+
+def _get_definition(func, args):
+    body, helpers = func(*[_ArgValueHelper(arg) for arg in args])
+    return apply_(body, args=[h.__value__ for h in helpers])
 
 
 def define(func):
@@ -542,26 +572,26 @@ def define(func):
         formatvalue=lambda value: '=' + value,
     )
 
-    body, arg_helpers = func(*_map(_arg_helper, spec.args))
-    body_args = ', '.join(_map(attrgetter('__name__'), arg_helpers))
-
     definition_src = (
         'def {name}{signature}:\n'
-        '    return __apply__(__body__, args=[{body_args}])\n'
+        '    return __defn__(__func__, [{args}])\n'
         .format(
             name=func.__name__,
             signature=signature,
-            body_args=body_args
+            args=', '.join(spec.args),
         )
     )
     definition_eval_dict = {
         '__defaults__': spec.defaults,
-        '__apply__': apply_,
-        '__body__': body,
+        '__defn__': _get_definition,
+        '__func__': func,
     }
     _exec_in(compile(definition_src, func.__module__, 'single'),
              definition_eval_dict)
     definition = definition_eval_dict[func.__name__]
+
+    body, arg_name_helpers = func(*[_ArgNameHelper(arg) for arg in spec.args])
+    body_args = ', '.join(h.__argname__ for h in arg_name_helpers)
 
     objective_src = (
         'def {name}{signature}:\n'

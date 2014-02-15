@@ -945,7 +945,6 @@ class TestSubQueries(unittest.TestCase):
             frozenset({'b7', 'b8', 'b9'}),
         })
 
-    @unittest.skip('TODO')
     def test_with_define(self):
 
         class A(self.base_cls):
@@ -973,10 +972,10 @@ class TestSubQueries(unittest.TestCase):
 
         query = (
             ConstructQuery({
-                # 'full_name': full_name.defn(A, A.b),
-                'full_name': apply_(full_name.func, args=[A.name, get_(B.name, A.b)]),
+                'full_name': full_name.defn(A, A.b),
             })
             .with_session(session.registry())
+            .order_by(A.name)
         )
 
         self.assertEqual(
