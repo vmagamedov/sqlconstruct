@@ -48,12 +48,12 @@ from sqlalchemy.orm.query import Query as _SAQuery, _QueryEntity
 from sqlalchemy.orm.attributes import QueryableAttribute, InstrumentedAttribute
 
 
-PY3 = sys.version_info[0] == 3
+_PY3 = sys.version_info[0] == 3
 
-SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
+_SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
 
 
-if PY3:
+if _PY3:
     import builtins
     def _exec_in(source, globals_dict):
         getattr(builtins, 'exec')(source, globals_dict)
@@ -71,19 +71,41 @@ else:
     _im_func = lambda m: m.im_func
 
 
-if SQLA_ge_09:
-    from sqlalchemy.orm.query import Bundle
+if _SQLA_ge_09:
+    from sqlalchemy.orm.query import Bundle as _Bundle
 else:
-    class Bundle(object):
+    class _Bundle(object):
         def __init__(self, name, *exprs, **kw):
             pass
 
 
 __all__ = (
-    'ConstructQuery', 'Construct',
+    'ConstructQuery', 'construct_query_maker', 'Construct',
     'if_', 'apply_', 'map_', 'get_', 'define',
     'QueryMixin',
 )
+
+
+class Object(immutabledict):
+
+    __new__ = dict.__new__
+    __init__ = dict.__init__
+
+    def __getattr__(self, attr):
+        try:
+            return self[attr]
+        except KeyError:
+            raise AttributeError('Constructed object has no attribute {0!r}'
+                                 .format(attr))
+
+    __delattr__ = ImmutableContainer._immutable
+
+    def __repr__(self):
+        return '{cls}({arg})'.format(cls=type(self).__name__,
+                                     arg=dict.__repr__(self))
+
+    def __reduce__(self):
+        return type(self), (dict(self),)
 
 
 class _QueryPlan(object):
@@ -116,7 +138,7 @@ class _QueryPlan(object):
         children = self.query_children(None)
 
         _results = [[((self.query_id(None), row),) for row in rows]]
-        _results.extend(child.__process__(self, None, rows, session)
+        _results.extend(child.__execute__(self, None, rows, session)
                         for child in children)
 
         return {0: [tuple(chain(*r)) for r in zip(*_results)]}
@@ -167,7 +189,7 @@ class _Scope(object):
         return loop
 
 
-class _QueryBase(_SAQuery):
+class _SubQueryBase(_SAQuery):
     __hash = None
 
     def __hash__(self):
@@ -175,7 +197,7 @@ class _QueryBase(_SAQuery):
             id_, hash_ = self.__hash
             if id(self) == id_:
                 return hash_
-        return super(_QueryBase, self).__hash__()
+        return super(_SubQueryBase, self).__hash__()
 
     def __set_hash__(self, hash):
         self.__hash = (id(self), hash)
@@ -193,19 +215,19 @@ class _QueryBase(_SAQuery):
     def __requires__(self):
         return tuple()
 
-    def __process__(self, query_plan, outer_query, outer_rows, session):
+    def __execute__(self, query_plan, outer_query, outer_rows, session):
         raise NotImplementedError
 
 
-class _ObjectSubQuery(_QueryBase):
+class _ObjectSubQuery(_SubQueryBase):
     pass
 
 
-class _CollectionSubQuery(_QueryBase):
+class _CollectionSubQuery(_SubQueryBase):
     pass
 
 
-class _RelativeObjectSubQuery(_QueryBase):
+class _RelativeObjectSubQuery(_SubQueryBase):
 
     def __init__(self, ext_expr, int_expr):
         self.__ext_expr = ext_expr
@@ -225,7 +247,7 @@ class _RelativeObjectSubQuery(_QueryBase):
     def __requires__(self):
         return [self.__int_expr]
 
-    def __process__(self, query_plan, outer_query, outer_rows, session):
+    def __execute__(self, query_plan, outer_query, outer_rows, session):
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
         ext_exprs = [row[ext_col_id] for row in outer_rows]
         if ext_exprs:
@@ -243,7 +265,7 @@ class _RelativeObjectSubQuery(_QueryBase):
         children = query_plan.query_children(self)
 
         _results = [[((query_plan.query_id(self), row),) for row in rows]]
-        _results.extend(child.__process__(query_plan, self, rows, session)
+        _results.extend(child.__execute__(query_plan, self, rows, session)
                         for child in children)
 
         mapping = {}
@@ -260,7 +282,7 @@ class _RelativeObjectSubQuery(_QueryBase):
         return [mapping.get(ext_expr, nulls) for ext_expr in ext_exprs]
 
 
-class _RelativeCollectionSubQuery(_QueryBase):
+class _RelativeCollectionSubQuery(_SubQueryBase):
 
     def __init__(self, ext_expr, int_expr):
         self.__ext_expr = ext_expr
@@ -283,7 +305,7 @@ class _RelativeCollectionSubQuery(_QueryBase):
     def __requires__(self):
         return [self.__int_expr]
 
-    def __process__(self, query_plan, outer_query, outer_rows, session):
+    def __execute__(self, query_plan, outer_query, outer_rows, session):
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
         ext_exprs = [row[ext_col_id] for row in outer_rows]
         if ext_exprs:
@@ -301,7 +323,7 @@ class _RelativeCollectionSubQuery(_QueryBase):
         children = query_plan.query_children(self)
 
         _results = [[((query_plan.query_id(self), row),) for row in rows]]
-        _results.extend(child.__process__(query_plan, self, rows, session)
+        _results.extend(child.__execute__(query_plan, self, rows, session)
                         for child in children)
 
         groups = defaultdict(list)
@@ -314,46 +336,7 @@ class _RelativeCollectionSubQuery(_QueryBase):
                 for ext_expr in ext_exprs]
 
 
-class Processable(object):
-
-    def __processor__(self, scope):
-        raise NotImplementedError
-
-
-def _get_value_processor(scope, value):
-    if isinstance(value, ColumnElement):
-        return scope.add(value)
-    elif isinstance(value, QueryableAttribute):
-        return _get_value_processor(scope, value.__clause_element__())
-    elif isinstance(value, Processable):
-        return value.__processor__(scope)
-    else:
-        return lambda result, _value=value: _value
-
-
-class Object(immutabledict):
-
-    __new__ = dict.__new__
-    __init__ = dict.__init__
-
-    def __getattr__(self, attr):
-        try:
-            return self[attr]
-        except KeyError:
-            raise AttributeError('Constructed object has no attribute {0!r}'
-                                 .format(attr))
-
-    __delattr__ = ImmutableContainer._immutable
-
-    def __repr__(self):
-        return '{cls}({arg})'.format(cls=type(self).__name__,
-                                     arg=dict.__repr__(self))
-
-    def __reduce__(self):
-        return type(self), (dict(self),)
-
-
-class ConstructQueryMixin(object):
+class _ConstructQueryMixin(object):
 
     def __init__(self, spec, scoped_session=None):
         self.__keys, values = zip(*spec.items()) if spec else [(), ()]
@@ -363,14 +346,14 @@ class ConstructQueryMixin(object):
         self.__scoped_session = scoped_session
 
         columns = self.__scope.query_plan.query_columns(None)
-        super(ConstructQueryMixin, self).__init__(columns)
+        super(_ConstructQueryMixin, self).__init__(columns)
 
     def __iter__(self):
         query = self
         if self.__scoped_session is not None:
             query = query.with_session(self.__scoped_session.registry())
 
-        rows = list(super(ConstructQueryMixin, query).__iter__())
+        rows = list(super(_ConstructQueryMixin, query).__iter__())
         result = self.__scope.query_plan.process_rows(rows, query.session)
         for r in self.__scope.gen_loop()(result):
             values = [proc(r) for proc in self.__procs]
@@ -378,13 +361,13 @@ class ConstructQueryMixin(object):
 
 
 def construct_query_maker(base_cls):
-    return type('ConstructQuery', (ConstructQueryMixin, base_cls), {})
+    return type('ConstructQuery', (_ConstructQueryMixin, base_cls), {})
 
 
 ConstructQuery = construct_query_maker(_SAQuery)
 
 
-class Construct(Bundle):
+class Construct(_Bundle):
     single_entity = True
 
     def __init__(self, spec):
@@ -410,7 +393,24 @@ class Construct(Bundle):
         return proc
 
 
-class if_(Processable):
+class _Processable(object):
+
+    def __processor__(self, scope):
+        raise NotImplementedError
+
+
+def _get_value_processor(scope, value):
+    if isinstance(value, ColumnElement):
+        return scope.add(value)
+    elif isinstance(value, QueryableAttribute):
+        return _get_value_processor(scope, value.__clause_element__())
+    elif isinstance(value, _Processable):
+        return value.__processor__(scope)
+    else:
+        return lambda result, _value=value: _value
+
+
+class if_(_Processable):
 
     def __init__(self, condition, then_=None, else_=None):
         self._cond = condition
@@ -429,7 +429,7 @@ class if_(Processable):
         return process
 
 
-class apply_(Processable):
+class apply_(_Processable):
 
     def __init__(self, func, args=None, kwargs=None):
         self._func = func
@@ -458,7 +458,7 @@ class apply_(Processable):
         return eval_dict['__processor__']
 
 
-class map_(Processable):
+class map_(_Processable):
 
     def __init__(self, func, collection):
         if isinstance(collection, _RelativeCollectionSubQuery):
@@ -478,7 +478,7 @@ class map_(Processable):
         return process
 
 
-class get_(Processable):
+class get_(_Processable):
 
     def __init__(self, func, obj):
         if isinstance(obj, _RelativeObjectSubQuery):
