@@ -30,6 +30,7 @@ else:
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
 from sqlconstruct import ConstructQuery, map_, get_, _Scope, _QueryPlan
+from sqlconstruct import _ObjectSubQuery, _CollectionSubQuery
 
 
 if SQLA_ge_09:
@@ -1006,3 +1007,38 @@ class TestSubQueries(unittest.TestCase):
         q2 = ConstructQuery({'name': A.name})
         with self.assertRaises(AttributeError):
             q2.all()
+
+    def test_with_custom_queries(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+
+        class B(self.base_cls):
+            name = Column(String)
+
+        session = self.init()
+        session.add_all([
+            A(name='a1'), A(name='a2'), A(name='a3'),
+            B(name='b1'), B(name='b2'), B(name='b3'),
+        ])
+        session.commit()
+
+        sq1 = _CollectionSubQuery(B).order_by(B.name.desc())
+        q1 = (
+            ConstructQuery({'a_name': A.name, 'b_list': map_(B.name, sq1)},
+                           session)
+            .order_by(A.name)
+        )
+        self.assertEqual({(obj.a_name, tuple(obj.b_list)) for obj in q1.all()},
+                         {('a1', ('b3', 'b2', 'b1')),
+                          ('a2', ('b3', 'b2', 'b1')),
+                          ('a3', ('b3', 'b2', 'b1'))})
+
+        sq2 = _ObjectSubQuery(B).order_by(B.name.desc())
+        q2 = (
+            ConstructQuery({'a_name': A.name, 'b_name': get_(B.name, sq2)},
+                           session)
+            .order_by(A.name)
+        )
+        self.assertEqual({(obj.a_name, obj.b_name) for obj in q2.all()},
+                         {('a1', 'b3'), ('a2', 'b3'), ('a3', 'b3')})

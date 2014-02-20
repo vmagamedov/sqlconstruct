@@ -137,11 +137,11 @@ class _QueryPlan(object):
     def process_rows(self, rows, session):
         children = self.query_children(None)
 
-        _results = [[((self.query_id(None), row),) for row in rows]]
-        _results.extend(child.__execute__(self, None, rows, session)
-                        for child in children)
+        results = [[((self.query_id(None), row),) for row in rows]]
+        results.extend(child.__execute__(self, None, rows, session)
+                       for child in children)
 
-        return {0: [tuple(chain(*r)) for r in zip(*_results)]}
+        return {0: [tuple(chain(*r)) for r in zip(*results)]}
 
 
 class _Scope(object):
@@ -152,8 +152,8 @@ class _Scope(object):
         self.parent = parent
 
         if query and parent:
+            self.query_plan.add_query(query, parent.query)
             for expr in query.__requires__():
-                self.query_plan.add_query(query, parent.query)
                 self.query_plan.add_expr(query, expr)
 
     def lookup(self, column):
@@ -164,10 +164,19 @@ class _Scope(object):
             scope = scope.parent
         return scope
 
+    def root(self):
+        scope = self
+        while scope.query:
+            scope = scope.parent
+        return scope
+
     def nested(self, query):
         ext_expr = query.__reference__()
-        scope = self.lookup(ext_expr)
-        self.query_plan.add_expr(scope.query, ext_expr)
+        if ext_expr is not None:
+            scope = self.lookup(ext_expr)
+            self.query_plan.add_expr(scope.query, ext_expr)
+        else:
+            scope = self.root()
         return type(self)(self.query_plan, query, scope)
 
     def add(self, column, query=None):
@@ -220,18 +229,69 @@ class _SubQueryBase(_SAQuery):
 
 
 class _ObjectSubQuery(_SubQueryBase):
-    pass
+
+    def __init__(self, expr, scoped_session=None):
+        self.__scoped_session = scoped_session
+        super(_ObjectSubQuery, self).__init__([expr])
+
+    def __execute__(self, query_plan, outer_query, outer_rows, session):
+        if self.__scoped_session is not None:
+            session = self.__scoped_session.registry()
+
+        columns = query_plan.query_columns(self)
+        row = (
+            self
+            .with_session(session)
+            .with_entities(*columns)
+            .first()
+        )
+        if row is not None:
+            children = query_plan.query_children(self)
+            results = ((query_plan.query_id(self), row),)
+            results += tuple(child.__execute__(query_plan, self, [row], session)
+                             for child in children)
+        else:
+            results = (
+                (query_plan.query_id(self),
+                 tuple(None for _ in query_plan.query_columns(self))),
+            )
+        return [results for _ in outer_rows]
 
 
 class _CollectionSubQuery(_SubQueryBase):
-    pass
+
+    def __init__(self, expr, scoped_session=None):
+        self.__scoped_session = scoped_session
+        super(_CollectionSubQuery, self).__init__([expr])
+
+    def __execute__(self, query_plan, outer_query, outer_rows, session):
+        if self.__scoped_session is not None:
+            session = self.__scoped_session.registry()
+
+        columns = query_plan.query_columns(self)
+        rows = (
+            self
+            .with_session(session)
+            .with_entities(*columns)
+            .all()
+        )
+        if rows:
+            children = query_plan.query_children(self)
+            results = [[((query_plan.query_id(self), row),) for row in rows]]
+            results.extend(child.__execute__(query_plan, self, rows, session)
+                           for child in children)
+            results = [tuple(chain(*r)) for r in zip(*results)]
+        else:
+            results = []
+        return [((query_plan.query_id(self), results),) for _ in outer_rows]
 
 
 class _RelativeObjectSubQuery(_SubQueryBase):
 
-    def __init__(self, ext_expr, int_expr):
+    def __init__(self, ext_expr, int_expr, scoped_session=None):
         self.__ext_expr = ext_expr
         self.__int_expr = int_expr
+        self.__scoped_session = scoped_session
         super(_RelativeObjectSubQuery, self).__init__([int_expr])
 
     @classmethod
@@ -248,6 +308,9 @@ class _RelativeObjectSubQuery(_SubQueryBase):
         return [self.__int_expr]
 
     def __execute__(self, query_plan, outer_query, outer_rows, session):
+        if self.__scoped_session is not None:
+            session = self.__scoped_session.registry()
+
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
         ext_exprs = [row[ext_col_id] for row in outer_rows]
         if ext_exprs:
@@ -264,12 +327,12 @@ class _RelativeObjectSubQuery(_SubQueryBase):
 
         children = query_plan.query_children(self)
 
-        _results = [[((query_plan.query_id(self), row),) for row in rows]]
-        _results.extend(child.__execute__(query_plan, self, rows, session)
-                        for child in children)
+        results = [[((query_plan.query_id(self), row),) for row in rows]]
+        results.extend(child.__execute__(query_plan, self, rows, session)
+                       for child in children)
 
         mapping = {}
-        for r in zip(*_results):
+        for r in zip(*results):
             r = tuple(chain(*r))
             _, row = r[0]
             mapping[row[-1]] = r
@@ -284,9 +347,10 @@ class _RelativeObjectSubQuery(_SubQueryBase):
 
 class _RelativeCollectionSubQuery(_SubQueryBase):
 
-    def __init__(self, ext_expr, int_expr):
+    def __init__(self, ext_expr, int_expr, scoped_session=None):
         self.__ext_expr = ext_expr
         self.__int_expr = int_expr
+        self.__scoped_session = scoped_session
         super(_RelativeCollectionSubQuery, self).__init__([int_expr])
 
     @classmethod
@@ -306,6 +370,9 @@ class _RelativeCollectionSubQuery(_SubQueryBase):
         return [self.__int_expr]
 
     def __execute__(self, query_plan, outer_query, outer_rows, session):
+        if self.__scoped_session is not None:
+            session = self.__scoped_session.registry()
+
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
         ext_exprs = [row[ext_col_id] for row in outer_rows]
         if ext_exprs:
@@ -314,7 +381,7 @@ class _RelativeCollectionSubQuery(_SubQueryBase):
                 self
                 .with_session(session)
                 .with_entities(*columns)
-                .filter(self.__int_expr.in_(ext_exprs))
+                .filter(self.__int_expr.in_(set(ext_exprs)))
                 .all()
             )
         else:
@@ -322,17 +389,17 @@ class _RelativeCollectionSubQuery(_SubQueryBase):
 
         children = query_plan.query_children(self)
 
-        _results = [[((query_plan.query_id(self), row),) for row in rows]]
-        _results.extend(child.__execute__(query_plan, self, rows, session)
-                        for child in children)
+        results = [[((query_plan.query_id(self), row),) for row in rows]]
+        results.extend(child.__execute__(query_plan, self, rows, session)
+                       for child in children)
 
-        groups = defaultdict(list)
-        for r in zip(*_results):
+        mapping = defaultdict(list)
+        for r in zip(*results):
             r = tuple(chain(*r))
             _, row = r[0]
-            groups[row[-1]].append(r)
+            mapping[row[-1]].append(r)
 
-        return [((query_plan.query_id(self), groups[ext_expr]),)
+        return [((query_plan.query_id(self), mapping[ext_expr]),)
                 for ext_expr in ext_exprs]
 
 
@@ -461,7 +528,7 @@ class apply_(_Processable):
 class map_(_Processable):
 
     def __init__(self, func, collection):
-        if isinstance(collection, _RelativeCollectionSubQuery):
+        if isinstance(collection, (_CollectionSubQuery, _RelativeCollectionSubQuery)):
             sub_query = collection
         else:
             sub_query = (_RelativeCollectionSubQuery
@@ -481,7 +548,7 @@ class map_(_Processable):
 class get_(_Processable):
 
     def __init__(self, func, obj):
-        if isinstance(obj, _RelativeObjectSubQuery):
+        if isinstance(obj, (_ObjectSubQuery, _RelativeObjectSubQuery)):
             sub_query = obj
         else:
             sub_query = _RelativeObjectSubQuery.from_relation(obj.property)
