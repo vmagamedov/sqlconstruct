@@ -81,6 +81,8 @@ else:
 
 __all__ = (
     'ConstructQuery', 'construct_query_maker', 'Construct',
+    'ObjectSubQuery', 'CollectionSubQuery',
+    'RelativeObjectSubQuery', 'RelativeCollectionSubQuery',
     'if_', 'apply_', 'map_', 'get_', 'define',
     'QueryMixin',
 )
@@ -228,71 +230,76 @@ class _SubQueryBase(_SAQuery):
         raise NotImplementedError
 
 
-class _ObjectSubQuery(_SubQueryBase):
+class ObjectSubQuery(_SubQueryBase):
 
     def __init__(self, expr, scoped_session=None):
         self.__scoped_session = scoped_session
-        super(_ObjectSubQuery, self).__init__([expr])
+        super(ObjectSubQuery, self).__init__([expr])
 
     def __execute__(self, query_plan, outer_query, outer_rows, session):
         if self.__scoped_session is not None:
             session = self.__scoped_session.registry()
 
+        self_id = query_plan.query_id(self)
         columns = query_plan.query_columns(self)
-        row = (
+
+        rows = (
             self
             .with_session(session)
             .with_entities(*columns)
-            .first()
+            .limit(1)
+            .all()
         )
-        if row is not None:
-            children = query_plan.query_children(self)
-            results = ((query_plan.query_id(self), row),)
-            results += tuple(child.__execute__(query_plan, self, [row], session)
-                             for child in children)
+
+        results = [[((self_id, row),) for row in rows]]
+        if rows:
+            results.extend(child.__execute__(query_plan, self, rows, session)
+                           for child in query_plan.query_children(self))
+            merged = [tuple(chain(*r)) for r in zip(*results)][0]
         else:
-            results = (
-                (query_plan.query_id(self),
-                 tuple(None for _ in query_plan.query_columns(self))),
-            )
-        return [results for _ in outer_rows]
+            merged = ((self_id, tuple(None for _ in columns)),)
+
+        return [merged for _ in outer_rows]
 
 
-class _CollectionSubQuery(_SubQueryBase):
+class CollectionSubQuery(_SubQueryBase):
 
     def __init__(self, expr, scoped_session=None):
         self.__scoped_session = scoped_session
-        super(_CollectionSubQuery, self).__init__([expr])
+        super(CollectionSubQuery, self).__init__([expr])
 
     def __execute__(self, query_plan, outer_query, outer_rows, session):
         if self.__scoped_session is not None:
             session = self.__scoped_session.registry()
 
+        self_id = query_plan.query_id(self)
         columns = query_plan.query_columns(self)
+
         rows = (
             self
             .with_session(session)
             .with_entities(*columns)
             .all()
         )
+
+        results = [[((self_id, row),) for row in rows]]
         if rows:
-            children = query_plan.query_children(self)
-            results = [[((query_plan.query_id(self), row),) for row in rows]]
             results.extend(child.__execute__(query_plan, self, rows, session)
-                           for child in children)
-            results = [tuple(chain(*r)) for r in zip(*results)]
+                           for child in query_plan.query_children(self))
+            merged = ((self_id, [tuple(chain(*r)) for r in zip(*results)]),)
         else:
-            results = []
-        return [((query_plan.query_id(self), results),) for _ in outer_rows]
+            merged = ((self_id, []),)
+
+        return [merged for _ in outer_rows]
 
 
-class _RelativeObjectSubQuery(_SubQueryBase):
+class RelativeObjectSubQuery(_SubQueryBase):
 
     def __init__(self, ext_expr, int_expr, scoped_session=None):
         self.__ext_expr = ext_expr
         self.__int_expr = int_expr
         self.__scoped_session = scoped_session
-        super(_RelativeObjectSubQuery, self).__init__([int_expr])
+        super(RelativeObjectSubQuery, self).__init__([int_expr])
 
     @classmethod
     def from_relation(cls, relation_property):
@@ -311,47 +318,51 @@ class _RelativeObjectSubQuery(_SubQueryBase):
         if self.__scoped_session is not None:
             session = self.__scoped_session.registry()
 
+        self_id = query_plan.query_id(self)
+        columns = query_plan.query_columns(self)
+
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
-        ext_exprs = [row[ext_col_id] for row in outer_rows]
-        if ext_exprs:
-            columns = query_plan.query_columns(self) + (self.__int_expr,)
+        ext_col_values = [row[ext_col_id] for row in outer_rows]
+
+        if outer_rows:
             rows = (
                 self
                 .with_session(session)
-                .with_entities(*columns)
-                .filter(self.__int_expr.in_(set(ext_exprs)))
+                .with_entities(*chain(columns, (self.__int_expr,)))
+                .filter(self.__int_expr.in_(set(ext_col_values) - {None}))
                 .all()
             )
         else:
             rows = []
 
-        children = query_plan.query_children(self)
+        results = [[((self_id, row),) for row in rows]]
+        if rows:
+            results.extend(child.__execute__(query_plan, self, rows, session)
+                           for child in query_plan.query_children(self))
 
-        results = [[((query_plan.query_id(self), row),) for row in rows]]
-        results.extend(child.__execute__(query_plan, self, rows, session)
-                       for child in children)
-
+        # merging query results and putting them into mapping
         mapping = {}
         for r in zip(*results):
             r = tuple(chain(*r))
             _, row = r[0]
+            # last column in the row is `self.__int_expr`
             mapping[row[-1]] = r
 
-        nulls = (
-            (query_plan.query_id(self),
-             tuple(None for _ in query_plan.query_columns(self))),
-        )
+        # null values are used to fill results of the subquery, when outer query
+        # row doesn't have corresponding row in this subquery (for example,
+        # foreign key is null)
+        nulls = ((self_id, tuple(None for _ in columns)),)
 
-        return [mapping.get(ext_expr, nulls) for ext_expr in ext_exprs]
+        return [mapping.get(val, nulls) for val in ext_col_values]
 
 
-class _RelativeCollectionSubQuery(_SubQueryBase):
+class RelativeCollectionSubQuery(_SubQueryBase):
 
     def __init__(self, ext_expr, int_expr, scoped_session=None):
         self.__ext_expr = ext_expr
         self.__int_expr = int_expr
         self.__scoped_session = scoped_session
-        super(_RelativeCollectionSubQuery, self).__init__([int_expr])
+        super(RelativeCollectionSubQuery, self).__init__([int_expr])
 
     @classmethod
     def from_relation(cls, relation_property):
@@ -373,34 +384,37 @@ class _RelativeCollectionSubQuery(_SubQueryBase):
         if self.__scoped_session is not None:
             session = self.__scoped_session.registry()
 
+        self_id = query_plan.query_id(self)
+        columns = query_plan.query_columns(self)
+
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
-        ext_exprs = [row[ext_col_id] for row in outer_rows]
-        if ext_exprs:
-            columns = query_plan.query_columns(self) + (self.__int_expr,)
+        ext_col_values = [row[ext_col_id] for row in outer_rows]
+
+        if ext_col_values:
             rows = (
                 self
                 .with_session(session)
-                .with_entities(*columns)
-                .filter(self.__int_expr.in_(set(ext_exprs)))
+                .with_entities(*chain(columns, (self.__int_expr,)))
+                .filter(self.__int_expr.in_(set(ext_col_values) - {None}))
                 .all()
             )
         else:
             rows = []
 
-        children = query_plan.query_children(self)
+        results = [[((self_id, row),) for row in rows]]
+        if rows:
+            results.extend(child.__execute__(query_plan, self, rows, session)
+                           for child in query_plan.query_children(self))
 
-        results = [[((query_plan.query_id(self), row),) for row in rows]]
-        results.extend(child.__execute__(query_plan, self, rows, session)
-                       for child in children)
-
+        # merging query results and putting them into mapping
         mapping = defaultdict(list)
         for r in zip(*results):
             r = tuple(chain(*r))
             _, row = r[0]
+            # last column in the row is `self.__int_expr`
             mapping[row[-1]].append(r)
 
-        return [((query_plan.query_id(self), mapping[ext_expr]),)
-                for ext_expr in ext_exprs]
+        return [((self_id, mapping[val]),) for val in ext_col_values]
 
 
 class _ConstructQueryMixin(object):
@@ -528,10 +542,10 @@ class apply_(_Processable):
 class map_(_Processable):
 
     def __init__(self, func, collection):
-        if isinstance(collection, (_CollectionSubQuery, _RelativeCollectionSubQuery)):
+        if isinstance(collection, (CollectionSubQuery, RelativeCollectionSubQuery)):
             sub_query = collection
         else:
-            sub_query = (_RelativeCollectionSubQuery
+            sub_query = (RelativeCollectionSubQuery
                          .from_relation(collection.property))
         self._func = func
         self._sub_query = sub_query
@@ -548,10 +562,10 @@ class map_(_Processable):
 class get_(_Processable):
 
     def __init__(self, func, obj):
-        if isinstance(obj, (_ObjectSubQuery, _RelativeObjectSubQuery)):
+        if isinstance(obj, (ObjectSubQuery, RelativeObjectSubQuery)):
             sub_query = obj
         else:
-            sub_query = _RelativeObjectSubQuery.from_relation(obj.property)
+            sub_query = RelativeObjectSubQuery.from_relation(obj.property)
         self._func = func
         self._sub_query = sub_query
 

@@ -30,7 +30,7 @@ else:
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
 from sqlconstruct import ConstructQuery, map_, get_, _Scope, _QueryPlan
-from sqlconstruct import _ObjectSubQuery, _CollectionSubQuery
+from sqlconstruct import ObjectSubQuery, CollectionSubQuery
 
 
 if SQLA_ge_09:
@@ -1023,7 +1023,7 @@ class TestSubQueries(unittest.TestCase):
         ])
         session.commit()
 
-        sq1 = _CollectionSubQuery(B).order_by(B.name.desc())
+        sq1 = CollectionSubQuery(B).order_by(B.name.desc())
         q1 = (
             ConstructQuery({'a_name': A.name, 'b_list': map_(B.name, sq1)},
                            session)
@@ -1034,7 +1034,7 @@ class TestSubQueries(unittest.TestCase):
                           ('a2', ('b3', 'b2', 'b1')),
                           ('a3', ('b3', 'b2', 'b1'))})
 
-        sq2 = _ObjectSubQuery(B).order_by(B.name.desc())
+        sq2 = ObjectSubQuery(B).order_by(B.name.desc())
         q2 = (
             ConstructQuery({'a_name': A.name, 'b_name': get_(B.name, sq2)},
                            session)
