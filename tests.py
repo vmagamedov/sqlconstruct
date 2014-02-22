@@ -3,6 +3,13 @@ import pickle
 import inspect
 import operator
 import collections
+from pstats import Stats
+from cProfile import Profile
+
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from io import StringIO
 
 try:
     import unittest2 as unittest
@@ -13,7 +20,7 @@ import sqlalchemy
 from sqlalchemy import Table, Column, String, Integer, ForeignKey
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import Session, Query as QueryBase, relationship, aliased
-from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.orm import subqueryload, scoped_session, sessionmaker
 from sqlalchemy.ext.declarative import declarative_base, DeclarativeMeta
 
 
@@ -21,6 +28,11 @@ PY3 = sys.version_info[0] == 3
 SQLA_ge_08 = sqlalchemy.__version__ >= '0.8'
 SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
 
+
+if PY3:
+    _range = range
+else:
+    _range = xrange
 
 if SQLA_ge_08:
     from sqlalchemy.util import KeyedTuple
@@ -562,14 +574,6 @@ class TestConstruct(unittest.TestCase):
 
     @unittest.skip('optional')
     def test_performance(self):
-        from pstats import Stats
-        from cProfile import Profile
-        try:
-            from cStringIO import StringIO
-        except ImportError:
-            from io import StringIO
-
-        _range = range if PY3 else xrange
 
         @define
         def test_func(a, b):
@@ -1042,3 +1046,89 @@ class TestSubQueries(unittest.TestCase):
         )
         self.assertEqual({(obj.a_name, obj.b_name) for obj in q2.all()},
                          {('a1', 'b3'), ('a2', 'b3'), ('a3', 'b3')})
+
+    @unittest.skip('optional')
+    def test_performance(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            b_list = relationship('B')
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_id = Column(Integer, ForeignKey('a.id'))
+
+        session = self.init()
+        session.add_all([A(name='a_%d' % i,
+                           b_list=[B(name='b_%d_%d' % (i, j))
+                                   for j in range(10)])
+                         for i in _range(20)])
+        session.commit()
+        session.remove()
+
+        @define
+        def b_name(a, b):
+            def body(a_id, a_name, b_id, b_name):
+                return '%d - %s - %d - %s' % (a_id, a_name, b_id, b_name)
+            return body, [a.id, a.name, b.id, b.name]
+
+        tuples_query = session.query(A.id, A.name)
+        tuples_subquery = session.query(B.id, B.a_id, B.name)
+
+        def perform_tuples_query():
+            a_rows = tuples_query.all()
+            _tuples_subquery = (
+                tuples_subquery
+                .filter(B.a_id.in_({a_row.id for a_row in a_rows}))
+            )
+            b_rows_map = collections.defaultdict(list)
+            for row in _tuples_subquery.all():
+                b_rows_map[row.a_id].append(row)
+
+            return [{'a_name': a_row.name,
+                     'b_names': [b_name.func(a_row.id, a_row.name,
+                                             b_row.id, b_row.name)
+                                 for b_row in b_rows_map[a_row.id]]}
+                    for a_row in a_rows]
+
+        construct_query = (
+            ConstructQuery({
+                'a_name': A.name,
+                'b_names': map_(b_name.defn(A, B), A.b_list),
+            }, session)
+        )
+
+        def perform_construct_query():
+            return construct_query.all()
+
+        def perform_objects_query():
+            session.remove()
+            query = session.query(A).options(subqueryload(A.b_list))
+            return [{'a_name': a.name,
+                     'b_names': [b_name(a, b) for b in a.b_list]}
+                    for a in query.all()]
+
+
+        def do(impl, count):
+            # warm-up
+            _res = [impl() for _ in _range(count)]
+
+            profile = Profile()
+            profile.enable()
+
+            res = [impl() for _ in _range(count)]
+
+            profile.disable()
+            out = StringIO()
+            stats = Stats(profile, stream=out)
+            stats.strip_dirs()
+            stats.sort_stats('calls').print_stats(10)
+            print(out.getvalue().lstrip())
+            out.close()
+            return _res, res
+
+        res = []
+        res.extend(do(perform_tuples_query, 1000))
+        res.extend(do(perform_construct_query, 1000))
+        res.extend(do(perform_objects_query, 1000))
+        1/0
