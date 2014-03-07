@@ -417,7 +417,7 @@ class RelativeCollectionSubQuery(_SubQueryBase):
         return [((self_id, mapping[val]),) for val in ext_col_values]
 
 
-class _ConstructQueryMixin(object):
+class _ConstructQueryBase(object):
 
     def __init__(self, spec, scoped_session=None):
         self.__keys, values = zip(*spec.items()) if spec else [(), ()]
@@ -425,24 +425,32 @@ class _ConstructQueryMixin(object):
         self.__procs = [_get_value_processor(self.__scope, val)
                         for val in values]
         self.__scoped_session = scoped_session
+        self.__session = None
 
         columns = self.__scope.query_plan.query_columns(None)
-        super(_ConstructQueryMixin, self).__init__(columns)
+        super(_ConstructQueryBase, self).__init__(columns)
+
+    @property
+    def session(self):
+        if self.__session is not None:
+            return self.__session
+        if self.__scoped_session is not None:
+            return self.__scoped_session.registry()
+
+    @session.setter
+    def session(self, value):
+        self.__session = value
 
     def __iter__(self):
-        query = self
-        if self.__scoped_session is not None:
-            query = query.with_session(self.__scoped_session.registry())
-
-        rows = list(super(_ConstructQueryMixin, query).__iter__())
-        result = self.__scope.query_plan.process_rows(rows, query.session)
+        rows = list(super(_ConstructQueryBase, self).__iter__())
+        result = self.__scope.query_plan.process_rows(rows, self.session)
         for r in self.__scope.gen_loop()(result):
             values = [proc(r) for proc in self.__procs]
             yield Object(zip(self.__keys, values))
 
 
 def construct_query_maker(base_cls):
-    return type('ConstructQuery', (_ConstructQueryMixin, base_cls), {})
+    return type('ConstructQuery', (_ConstructQueryBase, base_cls), {})
 
 
 ConstructQuery = construct_query_maker(_SAQuery)
