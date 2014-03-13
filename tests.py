@@ -384,6 +384,16 @@ class TestConstruct(unittest.TestCase):
             (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
         )
 
+    def test_pipe_operator(self):
+        struct = Construct({
+            'a_name_hash': apply_(capitalize, [self.a_cls.name]) | hash,
+        })
+
+        s1, s2 = self.session.query(struct).order_by(self.a_cls.name).all()
+
+        self.assertEqual(s1.a_name_hash, hash('A1'))
+        self.assertEqual(s2.a_name_hash, hash('A2'))
+
     def test_query_count(self):
         query = self.session.query(
             Construct({'a_id': self.a_cls.id,

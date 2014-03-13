@@ -487,6 +487,9 @@ class _Processable(object):
     def __processor__(self, scope):
         raise NotImplementedError
 
+    def __or__(self, value):
+        return apply_(value, [self])
+
 
 def _get_value_processor(scope, value):
     if isinstance(value, ColumnElement):
