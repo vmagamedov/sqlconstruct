@@ -429,6 +429,7 @@ class _ConstructQueryBase(object):
 
         columns = self.__scope.query_plan.query_columns(None)
         super(_ConstructQueryBase, self).__init__(columns)
+        self.__entities_modified = False
 
     @property
     def session(self):
@@ -441,12 +442,27 @@ class _ConstructQueryBase(object):
     def session(self, value):
         self.__session = value
 
+    def _set_entities(self, entities, entity_wrapper=None):
+        _SAQuery._set_entities(self, entities, entity_wrapper)
+        self.__entities_modified = True
+
+    def add_columns(self, *column):
+        raise NotImplementedError
+
+    def add_entity(self, entity, alias=None):
+        raise NotImplementedError
+
     def __iter__(self):
-        rows = list(super(_ConstructQueryBase, self).__iter__())
-        result = self.__scope.query_plan.process_rows(rows, self.session)
-        for r in self.__scope.gen_loop()(result):
-            values = [proc(r) for proc in self.__procs]
-            yield Object(zip(self.__keys, values))
+        iter_results = super(_ConstructQueryBase, self).__iter__()
+        if not self.__entities_modified:
+            rows = list(iter_results)
+            result = self.__scope.query_plan.process_rows(rows, self.session)
+            for r in self.__scope.gen_loop()(result):
+                values = [proc(r) for proc in self.__procs]
+                yield Object(zip(self.__keys, values))
+        else:
+            for item in iter_results:
+                yield item
 
 
 def construct_query_maker(base_cls):

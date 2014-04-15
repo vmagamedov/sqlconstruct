@@ -1057,6 +1057,24 @@ class TestSubQueries(unittest.TestCase):
         self.assertEqual({(obj.a_name, obj.b_name) for obj in q2.all()},
                          {('a1', 'b3'), ('a2', 'b3'), ('a3', 'b3')})
 
+    def test_query_entities_modification(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+
+        session = self.init()
+        session.add_all([A(name='a1'), A(name='a2'), A(name='a3')])
+        session.commit()
+
+        count = ConstructQuery({'name': A.name}, session).count()
+        self.assertEqual(count, 3)
+
+        with self.assertRaises(NotImplementedError):
+            ConstructQuery({'id': A.id}).add_columns(A.name)
+
+        with self.assertRaises(NotImplementedError):
+            ConstructQuery({'id': A.id}).add_entity(A)
+
     @unittest.skip('optional')
     def test_performance(self):
 
