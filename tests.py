@@ -16,11 +16,14 @@ try:
 except ImportError:
     import unittest
 
+from mock import patch
+
 import sqlalchemy
 from sqlalchemy import Table, Column, String, Integer, ForeignKey
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import Session, Query as QueryBase, relationship, aliased
 from sqlalchemy.orm import subqueryload, scoped_session, sessionmaker
+from sqlalchemy.sql.operators import ColumnOperators
 from sqlalchemy.ext.declarative import declarative_base, DeclarativeMeta
 
 
@@ -43,6 +46,7 @@ else:
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
 from sqlconstruct import ConstructQuery, map_, get_, _Scope, _QueryPlan
 from sqlconstruct import ObjectSubQuery, CollectionSubQuery
+from sqlconstruct import RelativeObjectSubQuery, RelativeCollectionSubQuery
 
 
 if SQLA_ge_09:
@@ -524,8 +528,8 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(s2.b_id, 2)
         self.assertEqual(s2.b_name, 'b2')
 
-    @unittest.skipIf(SQLA_ge_08, 'SQLAlchemy < 0.8')
-    def test_query_with_implicit_join_lt_08(self):
+    @unittest.skipIf(SQLA_ge_09, 'SQLAlchemy < 0.9')
+    def test_query_with_implicit_join_lt_09(self):
         from sqlalchemy.exc import InvalidRequestError
 
         with self.assertRaises(InvalidRequestError) as e1:
@@ -538,8 +542,11 @@ class TestConstruct(unittest.TestCase):
                 )
                 .join(self.a_cls)
             )
-        self.assertEqual(e1.exception.args[0],
-                         'Could not find a FROM clause to join from')
+        if SQLA_ge_08:
+            self.assertIn("Don't know how to join", e1.exception.args[0])
+        else:
+            self.assertEqual(e1.exception.args[0],
+                             "Could not find a FROM clause to join from")
 
         with self.assertRaises(InvalidRequestError) as e2:
             (
@@ -551,36 +558,11 @@ class TestConstruct(unittest.TestCase):
                 )
                 .join(self.b_cls)
             )
-        self.assertEqual(e2.exception.args[0],
-                         'Could not find a FROM clause to join from')
-
-    @unittest.skipIf(not SQLA_ge_08 or SQLA_ge_09, '0.8 <= SQLAlchemy < 0.9')
-    def test_query_with_implicit_join_ge_08(self):
-        from sqlalchemy.exc import NoInspectionAvailable
-
-        with self.assertRaises(NoInspectionAvailable) as e1:
-            (
-                self.session.query(
-                    Construct({'a_id': self.a_cls.id,
-                               'a_name': self.a_cls.name,
-                               'b_id': self.b_cls.id,
-                               'b_name': self.b_cls.name}),
-                )
-                .join(self.a_cls)
-            )
-        self.assertIn('No inspection system is available', e1.exception.args[0])
-
-        with self.assertRaises(NoInspectionAvailable) as e2:
-            (
-                self.session.query(
-                    Construct({'a_id': self.a_cls.id,
-                               'a_name': self.a_cls.name,
-                               'b_id': self.b_cls.id,
-                               'b_name': self.b_cls.name}),
-                )
-                .join(self.b_cls)
-            )
-        self.assertIn('No inspection system is available', e2.exception.args[0])
+        if SQLA_ge_08:
+            self.assertIn("Don't know how to join", e2.exception.args[0])
+        else:
+            self.assertEqual(e2.exception.args[0],
+                             "Could not find a FROM clause to join from")
 
     @unittest.skip('optional')
     def test_performance(self):
@@ -857,6 +839,43 @@ class TestSubQueries(unittest.TestCase):
                 ('b4', {'A1', 'A2', 'A3'}),
             ),
         )
+
+    def test_non_empty_in_op_in_relative_subqueries(self):
+        in_op = ColumnOperators.in_
+
+        class EmptyInOpError(Exception):
+            pass
+
+        def wrapper(self, values):
+            if not values:
+                raise EmptyInOpError
+            return in_op(self, values)
+
+        patcher = patch.object(ColumnOperators, 'in_', wrapper)
+
+        class A(self.base_cls):
+            value = Column(String)
+
+        class B(self.base_cls):
+            value = Column(String)
+
+        session = self.init()
+        session.add_all([A(), A(), A()])
+        session.commit()
+
+        obj_sq = RelativeObjectSubQuery(A.value, B.value)
+        obj_query = ConstructQuery({'a_id': A.id,
+                                    'b_id': get_(B.id, obj_sq)},
+                                   session)
+        with patcher:
+            obj_query.all()
+
+        list_sq = RelativeCollectionSubQuery(A.value, B.value)
+        list_query = ConstructQuery({'a_id': A.id,
+                                     'b_id': map_(B.id, list_sq)},
+                                    session)
+        with patcher:
+            list_query.all()
 
     def test_nested(self):
         """

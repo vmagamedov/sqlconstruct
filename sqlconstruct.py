@@ -323,13 +323,14 @@ class RelativeObjectSubQuery(_SubQueryBase):
 
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
         ext_col_values = [row[ext_col_id] for row in outer_rows]
+        ext_col_values_set = set(ext_col_values) - {None}
 
-        if outer_rows:
+        if ext_col_values_set:
             rows = (
                 self
                 .with_session(session)
                 .with_entities(*chain(columns, (self.__int_expr,)))
-                .filter(self.__int_expr.in_(set(ext_col_values) - {None}))
+                .filter(self.__int_expr.in_(ext_col_values_set))
                 .all()
             )
         else:
@@ -389,13 +390,14 @@ class RelativeCollectionSubQuery(_SubQueryBase):
 
         ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
         ext_col_values = [row[ext_col_id] for row in outer_rows]
+        ext_col_values_set = set(ext_col_values) - {None}
 
-        if ext_col_values:
+        if ext_col_values_set:
             rows = (
                 self
                 .with_session(session)
                 .with_entities(*chain(columns, (self.__int_expr,)))
-                .filter(self.__int_expr.in_(set(ext_col_values) - {None}))
+                .filter(self.__int_expr.in_(ext_col_values_set))
                 .all()
             )
         else:
