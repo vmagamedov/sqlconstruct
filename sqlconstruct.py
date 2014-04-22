@@ -83,7 +83,7 @@ __all__ = (
     'ConstructQuery', 'construct_query_maker', 'Construct',
     'ObjectSubQuery', 'CollectionSubQuery',
     'RelativeObjectSubQuery', 'RelativeCollectionSubQuery',
-    'if_', 'apply_', 'map_', 'get_', 'define',
+    'bind', 'if_', 'apply_', 'map_', 'get_', 'define',
     'QueryMixin',
 )
 
@@ -146,6 +146,21 @@ class _QueryPlan(object):
         return {0: [tuple(chain(*r)) for r in zip(*results)]}
 
 
+class _BoundExpression(object):
+
+    def __init__(self, expr, subquery):
+        self.expr = expr
+        self.subquery = subquery
+
+    def __getattr__(self, name):
+        # TODO: return _BoundExpression(getattr(self.expr, name), self.subquery)
+        raise NotImplementedError
+
+
+def bind(expr, subquery):
+    return _BoundExpression(expr, subquery)
+
+
 class _Scope(object):
 
     def __init__(self, query_plan, query=None, parent=None):
@@ -166,19 +181,30 @@ class _Scope(object):
             scope = scope.parent
         return scope
 
-    def root(self):
+    def query_scope(self, query):
+        scope = self
+        while scope.query:
+            if scope.query is query:
+                return scope
+            scope = scope.parent
+        raise ValueError('Unknown query {0!r}'.format(query))
+
+    def root_scope(self):
         scope = self
         while scope.query:
             scope = scope.parent
         return scope
 
     def nested(self, query):
-        ext_expr = query.__reference__()
-        if ext_expr is not None:
-            scope = self.lookup(ext_expr)
-            self.query_plan.add_expr(scope.query, ext_expr)
+        reference = query.__reference__()
+        if isinstance(reference, _BoundExpression):
+            scope = self.query_scope(reference.subquery)
+            self.query_plan.add_expr(reference.subquery, reference.expr)
+        elif reference is not None:
+            scope = self.lookup(reference)
+            self.query_plan.add_expr(scope.query, reference)
         else:
-            scope = self.root()
+            scope = self.root_scope()
         return type(self)(self.query_plan, query, scope)
 
     def add(self, column, query=None):
@@ -302,9 +328,20 @@ class RelativeObjectSubQuery(_SubQueryBase):
         super(RelativeObjectSubQuery, self).__init__([int_expr])
 
     @classmethod
-    def from_relation(cls, relation_property):
+    def from_relation(cls, relation):
+        if isinstance(relation, InstrumentedAttribute):
+            relation_property = relation.property
+        else:
+            relation_property = relation
+
+        if not isinstance(relation_property, RelationshipProperty):
+            raise TypeError('Invalid type provided: {0!r}'.format(relation))
+
         ext_expr, int_expr = relation_property.local_remote_pairs[0]
         query = cls(ext_expr, int_expr)
+        if relation_property.secondary is not None:
+            query = query.join(relation_property.mapper.class_,
+                               relation_property.secondaryjoin)
         query.__set_hash__(hash((cls, relation_property)))
         return query
 
@@ -366,7 +403,15 @@ class RelativeCollectionSubQuery(_SubQueryBase):
         super(RelativeCollectionSubQuery, self).__init__([int_expr])
 
     @classmethod
-    def from_relation(cls, relation_property):
+    def from_relation(cls, relation):
+        if isinstance(relation, InstrumentedAttribute):
+            relation_property = relation.property
+        else:
+            relation_property = relation
+
+        if not isinstance(relation_property, RelationshipProperty):
+            raise TypeError('Invalid type provided: {0!r}'.format(relation))
+
         ext_expr, int_expr = relation_property.local_remote_pairs[0]
         query = cls(ext_expr, int_expr)
         if relation_property.secondary is not None:
@@ -512,6 +557,8 @@ class _Processable(object):
 def _get_value_processor(scope, value):
     if isinstance(value, ColumnElement):
         return scope.add(value)
+    elif isinstance(value, _BoundExpression):
+        return scope.add(value.expr, value.subquery)
     elif isinstance(value, QueryableAttribute):
         return _get_value_processor(scope, value.__clause_element__())
     elif isinstance(value, _Processable):
@@ -574,8 +621,7 @@ class map_(_Processable):
         if isinstance(collection, (CollectionSubQuery, RelativeCollectionSubQuery)):
             sub_query = collection
         else:
-            sub_query = (RelativeCollectionSubQuery
-                         .from_relation(collection.property))
+            sub_query = RelativeCollectionSubQuery.from_relation(collection)
         self._func = func
         self._sub_query = sub_query
 
@@ -594,7 +640,7 @@ class get_(_Processable):
         if isinstance(obj, (ObjectSubQuery, RelativeObjectSubQuery)):
             sub_query = obj
         else:
-            sub_query = RelativeObjectSubQuery.from_relation(obj.property)
+            sub_query = RelativeObjectSubQuery.from_relation(obj)
         self._func = func
         self._sub_query = sub_query
 

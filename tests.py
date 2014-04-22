@@ -16,7 +16,10 @@ try:
 except ImportError:
     import unittest
 
-from mock import patch
+try:
+    from unittest.mock import patch
+except ImportError:
+    from mock import patch
 
 import sqlalchemy
 from sqlalchemy import Table, Column, String, Integer, ForeignKey
@@ -44,7 +47,7 @@ else:
 
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
-from sqlconstruct import ConstructQuery, map_, get_, _Scope, _QueryPlan
+from sqlconstruct import ConstructQuery, bind, map_, get_, _Scope, _QueryPlan
 from sqlconstruct import ObjectSubQuery, CollectionSubQuery
 from sqlconstruct import RelativeObjectSubQuery, RelativeCollectionSubQuery
 
@@ -183,7 +186,7 @@ class TestConstruct(unittest.TestCase):
             'a_id': self.a_cls.id,
             'a_name': self.a_cls.name,
         })
-        self.assertEquals(set(struct._columns), {
+        self.assertEqual(set(struct._columns), {
             self.a_cls.__table__.c.id,
             self.a_cls.__table__.c.name,
         })
@@ -201,7 +204,7 @@ class TestConstruct(unittest.TestCase):
             'a_id': apply_(operator.add, [self.a_cls.id, 5]),
             'a_name': apply_(operator.concat, [self.a_cls.name, '-test']),
         })
-        self.assertEquals(set(struct._columns), {
+        self.assertEqual(set(struct._columns), {
             self.a_cls.__table__.c.id,
             self.a_cls.__table__.c.name,
         })
@@ -248,15 +251,15 @@ class TestConstruct(unittest.TestCase):
         add = lambda a, b: a + b
 
         apl1 = apply_(add, [f1], {'b': f2})
-        self.assertEquals(columns_set(apl1), {c1, c2})
+        self.assertEqual(columns_set(apl1), {c1, c2})
         self.assertEqual(proceed(apl1, {c1: 3, c2: 4}), 3 + 4)
 
         apl2 = apply_(add, [c1], {'b': c2})
-        self.assertEquals(columns_set(apl2), {c1, c2})
+        self.assertEqual(columns_set(apl2), {c1, c2})
         self.assertEqual(proceed(apl1, {c1: 4, c2: 5}), 4 + 5)
 
         apl3 = apply_(add, [fn1], {'b': fn2})
-        self.assertEquals(columns_set(apl3), {fn1, fn2})
+        self.assertEqual(columns_set(apl3), {fn1, fn2})
         self.assertEqual(proceed(apl3, {fn1: 5, fn2: 6}), 5 + 6)
 
     def test_nested_apply(self):
@@ -293,7 +296,7 @@ class TestConstruct(unittest.TestCase):
                 ]),
             ]),
         ])
-        self.assertEquals(columns_set(apl), {c1, c2})
+        self.assertEqual(columns_set(apl), {c1, c2})
         self.assertEqual(proceed(apl, {c1: 4, c2: 5}), sum(range(10)))
 
     def test_if(self):
@@ -304,20 +307,20 @@ class TestConstruct(unittest.TestCase):
         c4 = self.b_cls.__table__.c.name
 
         if1 = if_(True, then_=1, else_=2)
-        self.assertEquals(columns_set(if1), set())
+        self.assertEqual(columns_set(if1), set())
         self.assertEqual(proceed(if1, {}), 1)
 
         if2 = if_(False, then_=1, else_=2)
-        self.assertEquals(columns_set(if2), set())
+        self.assertEqual(columns_set(if2), set())
         self.assertEqual(proceed(if2, {}), 2)
 
         if3 = if_(c1, then_=c2, else_=c3)
-        self.assertEquals(columns_set(if3), {c1, c2, c3})
+        self.assertEqual(columns_set(if3), {c1, c2, c3})
         self.assertEqual(proceed(if3, {c1: 0, c2: 3, c3: 6}), 6)
         self.assertEqual(proceed(if3, {c1: 1, c2: 3, c3: 6}), 3)
 
         if4 = if_(c1, then_=apply_(add, [c2, c3]), else_=apply_(add, [c3, c4]))
-        self.assertEquals(columns_set(if4), {c1, c2, c3, c4})
+        self.assertEqual(columns_set(if4), {c1, c2, c3, c4})
         self.assertEqual(proceed(if4, {c1: 0, c2: 2, c3: 3, c4: 4}), 3 + 4)
         self.assertEqual(proceed(if4, {c1: 1, c2: 2, c3: 3, c4: 4}), 2 + 3)
 
@@ -358,7 +361,7 @@ class TestConstruct(unittest.TestCase):
         apl1 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=3, extra_name='baz')
         self.assertTrue(isinstance(apl1, apply_), type(apl1))
-        self.assertEquals(columns_set(apl1), {c1, c2, c3, c4})
+        self.assertEqual(columns_set(apl1), {c1, c2, c3, c4})
         self.assertEqual(
             proceed(apl1, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
             (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
@@ -367,7 +370,7 @@ class TestConstruct(unittest.TestCase):
         apl2 = defined_func.defn(self.a_cls, self.b_cls,
                                  extra_id=c1, extra_name=c2)
         self.assertTrue(isinstance(apl2, apply_), type(apl2))
-        self.assertEquals(columns_set(apl2), {c1, c2, c3, c4})
+        self.assertEqual(columns_set(apl2), {c1, c2, c3, c4})
         self.assertEqual(
             proceed(apl2, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
             (1 + 2 + 1, 'foo' + 'bar' + 'foo'),
@@ -377,7 +380,7 @@ class TestConstruct(unittest.TestCase):
                                  extra_id=apply_(operator.add, [c1, c3]),
                                  extra_name=apply_(operator.concat, [c2, c4]))
         self.assertTrue(isinstance(apl3, apply_), type(apl3))
-        self.assertEquals(columns_set(apl3), {c1, c2, c3, c4})
+        self.assertEqual(columns_set(apl3), {c1, c2, c3, c4})
         self.assertEqual(
             proceed(apl3, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
             (1 + 2 + (1 + 2), 'foo' + 'bar' + ('foo' + 'bar')),
@@ -1093,6 +1096,43 @@ class TestSubQueries(unittest.TestCase):
 
         with self.assertRaises(NotImplementedError):
             ConstructQuery({'id': A.id}).add_entity(A)
+
+    def test_bound_to_query_expressions(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            b_list = relationship('B')
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_id = Column(Integer, ForeignKey('a.id'))
+
+        session = self.init()
+        session.add_all([
+            A(name='a1', b_list=[B(name='b1')]),
+            A(name='a2', b_list=[B(name='b4'), B(name='b5')]),
+            A(name='a3', b_list=[B(name='b7'), B(name='b8'), B(name='b9')]),
+        ])
+        session.commit()
+
+        sq = (
+            RelativeObjectSubQuery.from_relation(A.b_list)
+            .group_by(B.a_id)
+        )
+        query = (
+            ConstructQuery({
+                'a_name': A.name,
+                'b_count': get_(bind(func.count(), sq), sq),
+            })
+            .order_by(A.name.asc())
+            .with_session(session.registry())
+        )
+        self.assertEqual(
+            [dict(obj) for obj in query.all()],
+            [{'a_name': 'a1', 'b_count': 1},
+             {'a_name': 'a2', 'b_count': 2},
+             {'a_name': 'a3', 'b_count': 3}],
+        )
 
     @unittest.skip('optional')
     def test_performance(self):
