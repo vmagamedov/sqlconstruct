@@ -1134,6 +1134,116 @@ class TestSubQueries(unittest.TestCase):
              {'a_name': 'a3', 'b_count': 3}],
         )
 
+    def test_bound_to_query_reference(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            b_list = relationship('B')
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_id = Column(Integer, ForeignKey('a.id'))
+            ref = Column(Integer)
+
+        class C(self.base_cls):
+            name = Column(String)
+            ref = Column(Integer)
+
+        session = self.init()
+        session.add_all([
+            A(name='a1', b_list=[B(name='b1', ref=-1), B(name='b2', ref=2)]),
+            A(name='a2', b_list=[B(name='b3', ref=-3), B(name='b4', ref=4)]),
+            C(name='c1', ref=1), C(name='c2', ref=-1),
+            C(name='c3', ref=2), C(name='c4', ref=-2),
+            C(name='c5', ref=3), C(name='c6', ref=-3),
+            C(name='c7', ref=4), C(name='c8', ref=-4),
+        ])
+        session.commit()
+
+        sq1 = (
+            RelativeCollectionSubQuery.from_relation(A.b_list)
+            .order_by(B.name.asc())
+        )
+        sq2 = (
+            RelativeCollectionSubQuery(bind(func.abs(B.ref), sq1), func.abs(C.ref))
+            .order_by(C.name.asc())
+        )
+        query = (
+            ConstructQuery({
+                'a_name': A.name,
+                'c_names': map_(map_(C.name, sq2), sq1),
+            })
+            .order_by(A.name.asc())
+            .with_session(session.registry())
+        )
+        self.assertEqual(
+            [dict(obj) for obj in query.all()],
+            [
+                {'a_name': 'a1', 'c_names': [['c1', 'c2'], ['c3', 'c4']]},
+                {'a_name': 'a2', 'c_names': [['c5', 'c6'], ['c7', 'c8']]},
+            ],
+        )
+
+    def test_bound_to_query_entities(self):
+
+        class A(self.base_cls):
+            name = Column(String)
+            c_id = Column(Integer, ForeignKey('c.id'))
+            c = relationship('C')
+
+        class B(self.base_cls):
+            name = Column(String)
+            a_id = Column(Integer, ForeignKey('a.id'))
+            c_id = Column(Integer, ForeignKey('c.id'))
+            a = relationship('A', backref='b_list')
+            c = relationship('C')
+
+        class C(self.base_cls):
+            name = Column(String)
+
+        session = self.init()
+        session.add_all([
+            A(name='a1', c=C(name='c11'), b_list=[
+                B(name='b1', c=C(name='c21')),
+                B(name='b2', c=C(name='c22')),
+            ]),
+            A(name='a2', c=C(name='c12'), b_list=[
+                B(name='b3', c=C(name='c23')),
+                B(name='b4', c=C(name='c24')),
+            ]),
+            A(name='a3', c=C(name='c13'), b_list=[
+                B(name='b5', c=C(name='c25')),
+                B(name='b6', c=C(name='c26')),
+            ]),
+        ])
+        session.commit()
+
+        @define
+        def concat_names(a, c1, b, c2):
+            def body(a_name, c1_name, b_name, c2_name):
+                return ' '.join((a_name, c1_name, b_name, c2_name))
+            return body, [a.name, c1.name, b.name, c2.name]
+
+        sq = (
+            RelativeCollectionSubQuery.from_relation(A.b_list)
+            .outerjoin(B.c)
+            .order_by(B.name.asc())
+        )
+        query = (
+            ConstructQuery({
+                'names': map_(concat_names.defn(A, bind(C, None), B, C), sq),
+            })
+            .outerjoin(A.c)
+            .order_by(A.name.asc())
+            .with_session(session.registry())
+        )
+        self.assertEqual(
+            [dict(obj) for obj in query.all()],
+            [{'names': ['a1 c11 b1 c21', 'a1 c11 b2 c22']},
+             {'names': ['a2 c12 b3 c23', 'a2 c12 b4 c24']},
+             {'names': ['a3 c13 b5 c25', 'a3 c13 b6 c26']}],
+        )
+
     @unittest.skip('optional')
     def test_performance(self):
 

@@ -148,17 +148,28 @@ class _QueryPlan(object):
 
 class _BoundExpression(object):
 
-    def __init__(self, expr, subquery):
-        self.expr = expr
-        self.subquery = subquery
+    def __init__(self, expr, query):
+        self.__expr = expr
+        self.__query = query
 
     def __getattr__(self, name):
-        # TODO: return _BoundExpression(getattr(self.expr, name), self.subquery)
-        raise NotImplementedError
+        return _BoundExpression(getattr(self.__expr, name), self.__query)
+
+    def __query__(self):
+        return self.__query
+
+    def __expr__(self):
+        if isinstance(self.__expr, QueryableAttribute):
+            return self.__expr.__clause_element__()
+        else:
+            return self.__expr
 
 
 def bind(expr, subquery):
     return _BoundExpression(expr, subquery)
+
+
+_undefined = object()
 
 
 class _Scope(object):
@@ -198,8 +209,11 @@ class _Scope(object):
     def nested(self, query):
         reference = query.__reference__()
         if isinstance(reference, _BoundExpression):
-            scope = self.query_scope(reference.subquery)
-            self.query_plan.add_expr(reference.subquery, reference.expr)
+            if reference.__query__() is None:
+                scope = self.root_scope()
+            else:
+                scope = self.query_scope(reference.__query__())
+            self.query_plan.add_expr(scope.query, reference.__expr__())
         elif reference is not None:
             scope = self.lookup(reference)
             self.query_plan.add_expr(scope.query, reference)
@@ -207,8 +221,8 @@ class _Scope(object):
             scope = self.root_scope()
         return type(self)(self.query_plan, query, scope)
 
-    def add(self, column, query=None):
-        if query is None:
+    def add(self, column, query=_undefined):
+        if query is _undefined:
             query = self.lookup(column).query
         self.query_plan.add_expr(query, column)
 
@@ -358,7 +372,12 @@ class RelativeObjectSubQuery(_SubQueryBase):
         self_id = query_plan.query_id(self)
         columns = query_plan.query_columns(self)
 
-        ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
+        if isinstance(self.__ext_expr, _BoundExpression):
+            ext_expr = self.__ext_expr.__expr__()
+        else:
+            ext_expr = self.__ext_expr
+
+        ext_col_id = query_plan.column_id(outer_query, ext_expr)
         ext_col_values = [row[ext_col_id] for row in outer_rows]
         ext_col_values_set = set(ext_col_values) - {None}
 
@@ -433,7 +452,12 @@ class RelativeCollectionSubQuery(_SubQueryBase):
         self_id = query_plan.query_id(self)
         columns = query_plan.query_columns(self)
 
-        ext_col_id = query_plan.column_id(outer_query, self.__ext_expr)
+        if isinstance(self.__ext_expr, _BoundExpression):
+            ext_expr = self.__ext_expr.__expr__()
+        else:
+            ext_expr = self.__ext_expr
+
+        ext_col_id = query_plan.column_id(outer_query, ext_expr)
         ext_col_values = [row[ext_col_id] for row in outer_rows]
         ext_col_values_set = set(ext_col_values) - {None}
 
@@ -558,7 +582,7 @@ def _get_value_processor(scope, value):
     if isinstance(value, ColumnElement):
         return scope.add(value)
     elif isinstance(value, _BoundExpression):
-        return scope.add(value.expr, value.subquery)
+        return scope.add(value.__expr__(), value.__query__())
     elif isinstance(value, QueryableAttribute):
         return _get_value_processor(scope, value.__clause_element__())
     elif isinstance(value, _Processable):
