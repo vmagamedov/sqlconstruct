@@ -565,7 +565,7 @@ class Construct(_Bundle):
 
     def create_row_processor(self, query, procs, labels):
         def proc(row, result):
-            return self._from_row([row[col] for col in self._columns])
+            return self._from_row([proc(row, None) for proc in procs])
         return proc
 
 

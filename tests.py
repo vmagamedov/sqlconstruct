@@ -408,6 +408,17 @@ class TestConstruct(unittest.TestCase):
         )
         self.assertEqual(query.count(), 2)
 
+    def test_query_expr(self):
+        query = self.session.query(
+            Construct({'a_id': self.a_cls.id,
+                       'a_name': func.upper(self.a_cls.name)}),
+        )
+
+        s1, s2 = query.order_by(self.a_cls.name.asc()).all()
+
+        self.assertEqual(s1.a_name, 'A1')
+        self.assertEqual(s2.a_name, 'A2')
+
     def test_query_single_entity(self):
         query = self.session.query(
             Construct({'a_id': self.a_cls.id,
