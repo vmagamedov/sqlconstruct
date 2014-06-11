@@ -66,7 +66,7 @@ capitalize = lambda s: s.capitalize()
 @define
 def defined_func(a, b, extra_id=0, extra_name=''):
     def body(a_id, a_name, b_id, b_name, extra_id, extra_name):
-        return a_id + b_id + extra_id, a_name + b_name + extra_name
+        return a_id, b_id, extra_id, a_name, b_name, extra_name
     return body, [a.id, a.name, b.id, b.name, extra_id, extra_name]
 
 
@@ -355,7 +355,23 @@ class TestConstruct(unittest.TestCase):
                          self.b_cls(id=2, name='bar'),
                          extra_id=3,
                          extra_name='baz'),
-            (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
+            (1, 2, 3, 'foo', 'bar', 'baz'),
+        )
+
+        self.assertEqual(
+            defined_func(self.a_cls(id=1, name='foo'),
+                         None,
+                         extra_id=3,
+                         extra_name='baz'),
+            (1, None, 3, 'foo', None, 'baz'),
+        )
+
+        self.assertEqual(
+            defined_func(None,
+                         self.b_cls(id=2, name='bar'),
+                         extra_id=3,
+                         extra_name='baz'),
+            (None, 2, 3, None, 'bar', 'baz'),
         )
 
         apl1 = defined_func.defn(self.a_cls, self.b_cls,
@@ -364,7 +380,7 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(columns_set(apl1), {c1, c2, c3, c4})
         self.assertEqual(
             proceed(apl1, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
-            (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
+            (1, 2, 3, 'foo', 'bar', 'baz'),
         )
 
         apl2 = defined_func.defn(self.a_cls, self.b_cls,
@@ -373,7 +389,7 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(columns_set(apl2), {c1, c2, c3, c4})
         self.assertEqual(
             proceed(apl2, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
-            (1 + 2 + 1, 'foo' + 'bar' + 'foo'),
+            (1, 2, 1, 'foo', 'bar', 'foo'),
         )
 
         apl3 = defined_func.defn(self.a_cls, self.b_cls,
@@ -383,12 +399,12 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(columns_set(apl3), {c1, c2, c3, c4})
         self.assertEqual(
             proceed(apl3, {c1: 1, c2: 'foo', c3: 2, c4: 'bar'}),
-            (1 + 2 + (1 + 2), 'foo' + 'bar' + ('foo' + 'bar')),
+            (1, 2, (1 + 2), 'foo', 'bar', ('foo' + 'bar')),
         )
 
         self.assertEqual(
             defined_func.func(1, 'foo', 2, 'bar', 3, 'baz'),
-            (1 + 2 + 3, 'foo' + 'bar' + 'baz'),
+            (1, 2, 3, 'foo', 'bar', 'baz'),
         )
 
     def test_pipe_operator(self):

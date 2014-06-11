@@ -676,42 +676,66 @@ class get_(_Processable):
 class _ArgNameHelper(object):
 
     def __init__(self, name):
-        self.__argname__ = name
+        self.__name = name
 
     def __getattr__(self, name):
-        return _ArgNameAttrHelper(self.__argname__ + '.' + name)
+        return _ArgNameAttrHelper(self.__name, name)
+
+    def __argname__(self):
+        return self.__name
 
 
-class _ArgNameAttrHelper(_ArgNameHelper):
+class _ArgNameAttrHelper(object):
+
+    def __init__(self, name, attr_name):
+        self.__name = name
+        self.__attr_name = attr_name
 
     def __getattr__(self, name):
         raise AttributeError('It is not allowed to access second-level '
                              'attributes in the function definition')
+
+    def __argname__(self):
+        return (
+            '{name}.{attr_name} if {name} is not None else None'
+            .format(name=self.__name, attr_name=self.__attr_name)
+        )
 
 
 class _ArgValueHelper(object):
 
-    def __init__(self, arg):
-        self.__value__ = arg
+    def __init__(self, value):
+        self.__value = value
 
     def __getattr__(self, name):
-        if (isinstance(self.__value__, InstrumentedAttribute) and
-            isinstance(self.__value__.property, RelationshipProperty)):
-            column = getattr(self.__value__.property.mapper.class_, name)
-            return _ArgValueAttrHelper(get_(column, self.__value__))
-        return _ArgValueAttrHelper(getattr(self.__value__, name))
+        return _ArgValueAttrHelper(self.__value, name)
+
+    def __argvalue__(self):
+        return self.__value
 
 
-class _ArgValueAttrHelper(_ArgValueHelper):
+class _ArgValueAttrHelper(object):
+
+    def __init__(self, value, attr_name):
+        self.__value = value
+        self.__attr_name = attr_name
 
     def __getattr__(self, name):
         raise AttributeError('It is not allowed to access second-level '
                              'attributes in the function definition')
 
+    def __argvalue__(self):
+        if (isinstance(self.__value, InstrumentedAttribute) and
+            isinstance(self.__value.property, RelationshipProperty)):
+            relation_cls = self.__value.property.mapper.class_
+            column = getattr(relation_cls, self.__attr_name)
+            return get_(column, self.__value)
+        return getattr(self.__value, self.__attr_name)
+
 
 def _get_definition(func, args):
     body, helpers = func(*[_ArgValueHelper(arg) for arg in args])
-    return apply_(body, args=[h.__value__ for h in helpers])
+    return apply_(body, args=[h.__argvalue__() for h in helpers])
 
 
 def define(func):
@@ -766,7 +790,7 @@ def define(func):
     definition = definition_eval_dict[func.__name__]
 
     body, arg_name_helpers = func(*[_ArgNameHelper(arg) for arg in spec.args])
-    body_args = ', '.join(h.__argname__ for h in arg_name_helpers)
+    body_args = ', '.join(h.__argname__() for h in arg_name_helpers)
 
     objective_src = (
         'def {name}{signature}:\n'
