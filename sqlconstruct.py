@@ -48,6 +48,8 @@ from sqlalchemy.orm.query import Query as _SAQuery, _QueryEntity
 from sqlalchemy.orm.attributes import QueryableAttribute, InstrumentedAttribute
 
 
+__version__ = '0.2.0'
+
 _PY3 = sys.version_info[0] == 3
 
 _SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
