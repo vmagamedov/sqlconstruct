@@ -1356,3 +1356,48 @@ class TestSubQueries(unittest.TestCase):
         res.extend(do(perform_construct_query, 1000))
         res.extend(do(perform_objects_query, 1000))
         1/0
+
+
+class TestBugs(unittest.TestCase):
+
+    def setUp(self):
+        self.engine = create_engine('sqlite://')
+        self.base_cls = declarative_base(metaclass=BaseMeta)
+
+    def init(self):
+        self.base_cls.metadata.create_all(self.engine)
+        session = scoped_session(sessionmaker())
+        session.configure(bind=self.engine)
+        return session
+
+    def test_nested_get_with_null_value_in_outer_expr(self):
+        class A(self.base_cls):
+            name = Column(String)
+            b_id = Column('b_id', Integer, ForeignKey('b.id'))
+            b = relationship('B', backref='a_list')
+
+        class B(self.base_cls):
+            name = Column(String)
+            c_id = Column('c_id', Integer, ForeignKey('c.id'))
+            c = relationship('C', backref='b_list')
+
+        class C(self.base_cls):
+            name = Column(String)
+
+        session = self.init()
+        c1 = C(name='c1')
+        b1, b2 = B(name='b1', c=c1), B(name='b2')
+        a1, a2, a3 = A(name='a1', b=b1), A(name='a2', b=b2), A(name='a3')
+        session.add_all([a1, a2, a3, b1, b2, c1])
+        session.commit()
+
+        res = tuple(dict(obj) for obj in ConstructQuery({
+            'a_name': A.name,
+            'b_name': get_(B.name, A.b),
+            'c_name': get_(get_(C.name, B.c), A.b),
+        }).with_session(session.registry()).order_by(A.name).all())
+        self.assertEqual(res, (
+            {'a_name': 'a1', 'b_name': 'b1', 'c_name': 'c1'},
+            {'a_name': 'a2', 'b_name': 'b2', 'c_name': None},
+            {'a_name': 'a3', 'b_name': None, 'c_name': None},
+        ))

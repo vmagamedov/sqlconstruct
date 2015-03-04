@@ -48,7 +48,7 @@ from sqlalchemy.orm.query import Query as _SAQuery, _QueryEntity
 from sqlalchemy.orm.attributes import QueryableAttribute, InstrumentedAttribute
 
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 _PY3 = sys.version_info[0] == 3
 
@@ -394,10 +394,14 @@ class RelativeObjectSubQuery(_SubQueryBase):
         else:
             rows = []
 
+        # null values are used to fill results of the subquery, when outer query
+        # row doesn't have corresponding row in this subquery (for example,
+        # foreign key is null)
+        rows += [tuple(None for _ in columns)]
+
         results = [[((self_id, row),) for row in rows]]
-        if rows:
-            results.extend(child.__execute__(query_plan, self, rows, session)
-                           for child in query_plan.query_children(self))
+        results.extend(child.__execute__(query_plan, self, rows, session)
+                       for child in query_plan.query_children(self))
 
         # merging query results and putting them into mapping
         mapping = {}
@@ -407,10 +411,7 @@ class RelativeObjectSubQuery(_SubQueryBase):
             # last column in the row is `self.__int_expr`
             mapping[row[-1]] = r
 
-        # null values are used to fill results of the subquery, when outer query
-        # row doesn't have corresponding row in this subquery (for example,
-        # foreign key is null)
-        nulls = ((self_id, tuple(None for _ in columns)),)
+        nulls = mapping[None]
 
         return [mapping.get(val, nulls) for val in ext_col_values]
 
