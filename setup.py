@@ -11,14 +11,14 @@ with open(join(dirname(__file__), 'README.rst')) as f:
 
 setup(
     name='SQLConstruct',
-    version='0.2.1',
+    version='0.2.2',
     description='Functional approach to query database using SQLAlchemy',
     long_description=README,
     author='Vladimir Magamedov',
     author_email='vladimir@magamedov.com',
     url='https://github.com/vmagamedov/sqlconstruct',
     py_modules=['sqlconstruct'],
-    install_requires=['SQLAlchemy>=0.7.6'],
+    install_requires=['SQLAlchemy>=0.9'],
     license='BSD',
     classifiers=[
         'Development Status :: 5 - Production/Stable',
