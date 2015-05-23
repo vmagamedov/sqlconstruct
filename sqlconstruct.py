@@ -54,6 +54,8 @@ _PY3 = sys.version_info[0] == 3
 
 _SQLA_ge_09 = sqlalchemy.__version__ >= '0.9'
 
+_SQLA_ge_10 = sqlalchemy.__version__ >= '1.0'
+
 
 if _PY3:
     import builtins
@@ -567,8 +569,12 @@ class Construct(_Bundle):
         return list(self._from_row(row) for row in query)
 
     def create_row_processor(self, query, procs, labels):
-        def proc(row, result):
-            return self._from_row([proc(row, None) for proc in procs])
+        if _SQLA_ge_10:
+            def proc(row):
+                return self._from_row([proc(row) for proc in procs])
+        else:
+            def proc(row, result):
+                return self._from_row([proc(row, None) for proc in procs])
         return proc
 
 

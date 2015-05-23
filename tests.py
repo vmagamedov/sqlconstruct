@@ -40,11 +40,6 @@ if PY3:
 else:
     _range = xrange
 
-if SQLA_ge_08:
-    from sqlalchemy.util import KeyedTuple
-else:
-    from sqlalchemy.util import NamedTuple as KeyedTuple
-
 
 from sqlconstruct import Construct, Object, apply_, if_, define, QueryMixin
 from sqlconstruct import ConstructQuery, bind, map_, get_, _Scope, _QueryPlan
@@ -119,7 +114,6 @@ class TestConstruct(unittest.TestCase):
 
     def test_object_interface(self):
         obj = Object({'a': 1, 'b': 2})
-        self.assertEqual(repr(obj), 'Object({})'.format(repr({'a': 1, 'b': 2})))
         self.assertTrue(isinstance(obj, collections.Mapping), type(obj))
         self.assertEqual(obj.a, 1)
         self.assertEqual(obj['a'], 1)
@@ -466,14 +460,14 @@ class TestConstruct(unittest.TestCase):
 
         r1, r2 = query.all()
 
-        self.assertTrue(isinstance(r1, KeyedTuple), type(r1))
+        self.assertTrue(isinstance(r1, tuple), type(r1))
         self.assertEqual(r1.id, 1)
         self.assertEqual(r1.name, 'a1')
         self.assertTrue(isinstance(r1[1], Object), type(r1[1]))
         self.assertEqual(r1[1].a_id, 1)
         self.assertEqual(r1[1].a_name, 'a1')
 
-        self.assertTrue(isinstance(r2, KeyedTuple), type(r2))
+        self.assertTrue(isinstance(r2, tuple), type(r2))
         self.assertEqual(r2.id, 2)
         self.assertEqual(r2.name, 'a2')
         self.assertTrue(isinstance(r2[1], Object), type(r2[1]))
