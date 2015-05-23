@@ -812,6 +812,9 @@ def define(func):
              objective_eval_dict)
     objective = objective_eval_dict[func.__name__]
 
+    objective.__module__ = func.__module__
+    objective.__doc__ = func.__doc__
+
     objective.func = body
     objective.defn = definition
     return objective

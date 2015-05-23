@@ -65,6 +65,7 @@ capitalize = lambda s: s.capitalize()
 
 @define
 def defined_func(a, b, extra_id=0, extra_name=''):
+    """doc"""
     def body(a_id, a_name, b_id, b_name, extra_id, extra_name):
         return a_id, b_id, extra_id, a_name, b_name, extra_name
     return body, [a.id, a.name, b.id, b.name, extra_id, extra_name]
@@ -406,6 +407,10 @@ class TestConstruct(unittest.TestCase):
             defined_func.func(1, 'foo', 2, 'bar', 3, 'baz'),
             (1, 2, 3, 'foo', 'bar', 'baz'),
         )
+
+    def test_defined_meta(self):
+        self.assertEqual(defined_func.__doc__, "doc")
+        self.assertEqual(defined_func.__module__, "tests")
 
     def test_pipe_operator(self):
         struct = Construct({
