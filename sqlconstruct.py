@@ -45,7 +45,7 @@ from sqlalchemy.sql import ColumnElement
 from sqlalchemy.orm import RelationshipProperty
 from sqlalchemy.util import immutabledict, ImmutableContainer, OrderedSet
 from sqlalchemy.orm.query import Query as _SAQuery, _QueryEntity
-from sqlalchemy.orm.attributes import QueryableAttribute, InstrumentedAttribute
+from sqlalchemy.orm.attributes import QueryableAttribute
 
 
 __version__ = '0.2.1'
@@ -347,7 +347,7 @@ class RelativeObjectSubQuery(_SubQueryBase):
 
     @classmethod
     def from_relation(cls, relation):
-        if isinstance(relation, InstrumentedAttribute):
+        if isinstance(relation, QueryableAttribute):
             relation_property = relation.property
         else:
             relation_property = relation
@@ -428,7 +428,7 @@ class RelativeCollectionSubQuery(_SubQueryBase):
 
     @classmethod
     def from_relation(cls, relation):
-        if isinstance(relation, InstrumentedAttribute):
+        if isinstance(relation, QueryableAttribute):
             relation_property = relation.property
         else:
             relation_property = relation
@@ -734,7 +734,7 @@ class _ArgValueAttrHelper(object):
                              'attributes in the function definition')
 
     def __argvalue__(self):
-        if (isinstance(self.__value, InstrumentedAttribute) and
+        if (isinstance(self.__value, QueryableAttribute) and
             isinstance(self.__value.property, RelationshipProperty)):
             relation_cls = self.__value.property.mapper.class_
             column = getattr(relation_cls, self.__attr_name)

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, Query as QueryBase, relationship, aliased
 from sqlalchemy.orm import subqueryload, scoped_session, sessionmaker
 from sqlalchemy.sql.operators import ColumnOperators
 from sqlalchemy.ext.declarative import declarative_base, DeclarativeMeta
+from sqlalchemy.ext.hybrid import hybrid_property
 
 
 PY3 = sys.version_info[0] == 3
@@ -102,6 +103,7 @@ class TestConstruct(unittest.TestCase):
             name=Column(String),
             a_id=Column(Integer, ForeignKey('a.id')),
             a=relationship('A'),
+            just_a=hybrid_property(lambda self: self.a),
         ))
 
         base_cls.metadata.create_all(engine)
@@ -400,6 +402,33 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(
             defined_func.func(1, 'foo', 2, 'bar', 3, 'baz'),
             (1, 2, 3, 'foo', 'bar', 'baz'),
+        )
+
+    def test_define_with_relationship(self):
+        res = defined_func.defn(
+            self.b_cls.a, self.b_cls,
+        )
+        self.assertTrue(isinstance(res, apply_), type(res))
+        self.assertEqual(
+            columns_set(res),
+            {
+                self.b_cls.__table__.c.id,
+                self.b_cls.__table__.c.name,
+                self.b_cls.__table__.c.a_id,
+            }
+        )
+
+        res = defined_func.defn(
+            self.b_cls.just_a, self.b_cls,
+        )
+        self.assertTrue(isinstance(res, apply_), type(res))
+        self.assertEqual(
+            columns_set(res),
+            {
+                self.b_cls.__table__.c.id,
+                self.b_cls.__table__.c.name,
+                self.b_cls.__table__.c.a_id,
+            }
         )
 
     def test_defined_meta(self):
@@ -781,6 +810,10 @@ class TestSubQueries(unittest.TestCase):
             name = Column(String)
             b_list = relationship('B')
 
+            @hybrid_property
+            def just_b_list(self):
+                return self.b_list
+
         class B(self.base_cls):
             name = Column(String)
             a_id = Column(Integer, ForeignKey('a.id'))
@@ -797,6 +830,20 @@ class TestSubQueries(unittest.TestCase):
             ConstructQuery({
                 'a_name': A.name,
                 'b_names': map_(apply_(capitalize, [B.name]), A.b_list),
+            })
+            .with_session(session.registry())
+        )
+        self.assertEqual(
+            tuple(dict(obj) for obj in query.all()),
+            ({'a_name': 'a1', 'b_names': ['B1', 'B2', 'B3']},
+             {'a_name': 'a2', 'b_names': ['B4', 'B5', 'B6']},
+             {'a_name': 'a3', 'b_names': ['B7', 'B8', 'B9']}),
+        )
+
+        query = (
+            ConstructQuery({
+                'a_name': A.name,
+                'b_names': map_(apply_(capitalize, [B.name]), A.just_b_list),
             })
             .with_session(session.registry())
         )
@@ -1015,6 +1062,10 @@ class TestSubQueries(unittest.TestCase):
             b_id = Column(Integer, ForeignKey('b.id'))
             b = relationship('B')
 
+            @hybrid_property
+            def just_b(self):
+                return self.b
+
         class B(self.base_cls):
             name = Column(String)
 
@@ -1040,7 +1091,26 @@ class TestSubQueries(unittest.TestCase):
             .with_session(session.registry())
             .order_by(A.name)
         )
+        self.assertEqual(
+            tuple(dict(obj) for obj in query.all()),
+            ({'full_name': 'A1 B1'},
+             {'full_name': 'A2 B1'},
+             {'full_name': 'A3 B1'},
+             {'full_name': 'A4 B2'},
+             {'full_name': 'A5 B2'},
+             {'full_name': 'A6 B2'},
+             {'full_name': 'A7 B3'},
+             {'full_name': 'A8 B3'},
+             {'full_name': 'A9 B3'}),
+        )
 
+        query = (
+            ConstructQuery({
+                'full_name': full_name.defn(A, A.just_b),
+            })
+            .with_session(session.registry())
+            .order_by(A.name)
+        )
         self.assertEqual(
             tuple(dict(obj) for obj in query.all()),
             ({'full_name': 'A1 B1'},
