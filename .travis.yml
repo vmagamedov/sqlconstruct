@@ -8,10 +8,11 @@ python:
 - "pypy"
 
 env:
+- SQLA_VERSION=0.7
+- SQLA_VERSION=0.8
 - SQLA_VERSION=0.9
 - SQLA_VERSION=1.0
 - SQLA_VERSION=1.1
-- SQLA_VERSION=dev
 
 install:
 - pip install tox-travis

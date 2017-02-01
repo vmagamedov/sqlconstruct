@@ -11,7 +11,7 @@ with open(join(dirname(__file__), 'README.rst')) as f:
 
 setup(
     name='SQLConstruct',
-    version='0.2.2',
+    version='0.2.3',
     description='Functional approach to query database using SQLAlchemy',
     long_description=README,
     author='Vladimir Magamedov',

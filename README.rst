@@ -257,13 +257,15 @@ Modified final ``Construct`` definition:
 Installation
 ============
 
-To install `SQLConstruct`, simply::
+To install `SQLConstruct`, simply:
 
-    pip install https://github.com/vmagamedov/sqlconstruct/archive/rev-0.2.zip
+.. code-block:: shell
 
-`SQLConstruct` is tested and supported on these Python versions: 2.7 and 3.3;
-PyPy is also supported. Supported `SQLAlchemy` versions includes 0.7, 0.8
-and 0.9.
+    $ pip install sqlconstruct
+
+Tested `Python` versions: 2.7, 3.4, PyPy.
+
+Tested `SQLAlchemy` versions: 0.7, 0.8, 0.9, 1.0, 1.1.
 
 Examples above are using `SQLAlchemy` >= 0.9, if you are using older versions,
 you will have to do next changes in your project configuration:
@@ -277,7 +279,7 @@ you will have to do next changes in your project configuration:
         pass
 
     session = Session(engine, query_cls=Query)
-    
+
 Flask-SQLAlchemy:
 
 .. code-block:: python
