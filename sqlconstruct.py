@@ -769,9 +769,13 @@ def define(func):
         '/p1-foo-product.html'
 
     """
-    spec = inspect.getargspec(func)
-    assert not spec.varargs and not spec.keywords,\
-        'Variable args are not supported'
+    vargs_err = 'Variable args are not supported'
+    if _PY3:
+        spec = inspect.getfullargspec(func)
+        assert not spec.varargs and not spec.varkw, vargs_err
+    else:
+        spec = inspect.getargspec(func)
+        assert not spec.varargs and not spec.keywords, vargs_err
 
     signature = inspect.formatargspec(
         args=spec.args,
