@@ -263,9 +263,9 @@ To install `SQLConstruct`, simply:
 
     $ pip install sqlconstruct
 
-Tested `Python` versions: 2.7, 3.4, PyPy.
+Tested `Python` versions: 2.7, 3.4, 3.8.
 
-Tested `SQLAlchemy` versions: 0.7, 0.8, 0.9, 1.0, 1.1.
+Tested `SQLAlchemy` versions: 1.0, 1.1, 1.2, 1.3.
 
 Examples above are using `SQLAlchemy` >= 0.9, if you are using older versions,
 you will have to do next changes in your project configuration:
