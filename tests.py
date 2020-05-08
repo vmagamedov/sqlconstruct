@@ -341,6 +341,22 @@ class TestConstruct(unittest.TestCase):
         self.assertEqual(func_spec.keywords, None)
         self.assertEqual(func_spec.defaults, None)
 
+    def test_defined_invalid_vargs(self):
+        with self.assertRaisesRegexp(
+            AssertionError, 'Variable args are not supported'
+        ):
+            @define
+            def defined_func_with_kwargs(**kwargs):
+                pass
+
+        with self.assertRaisesRegexp(
+            AssertionError, 'Variable args are not supported'
+        ):
+            @define
+            def defined_func_with_args(*args):
+                pass
+
+
     def test_defined_calls(self):
         c1 = self.a_cls.__table__.c.id
         c2 = self.a_cls.__table__.c.name
