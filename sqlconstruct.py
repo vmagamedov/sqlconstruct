@@ -48,7 +48,7 @@ from sqlalchemy.orm.query import Query as _SAQuery, _QueryEntity
 from sqlalchemy.orm.attributes import QueryableAttribute
 
 
-__version__ = '0.2.3'
+__version__ = '0.2.4'
 
 _PY3 = sys.version_info[0] == 3
 
